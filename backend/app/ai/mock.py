@@ -1,0 +1,273 @@
+"""Offline-Spielleiter ohne externes Sprachmodell.
+
+Der Mock-Provider erzeugt regelkonformes JSON aus dem uebergebenen Kontext.
+Damit ist die Plattform ohne API-Schluessel vollstaendig spielbar -- und die
+Integrationstests laufen deterministisch und kostenlos.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+import re
+from typing import Any
+
+from app.ai.base import LLMRequest, LLMResponse
+
+_CONTEXT_BLOCK = re.compile(r"```json\s*(.*?)```", re.DOTALL)
+
+_OPENINGS = [
+    "Der Wind traegt den Geruch von kaltem Rauch heran.",
+    "Ueber euch schliesst sich der Himmel zu einem bleiernen Grau.",
+    "Irgendwo in der Ferne schlaegt eine Glocke, dreimal, dann Stille.",
+    "Der Boden unter euren Stiefeln gibt nach, feucht und weich.",
+]
+
+_BEATS = [
+    "Etwas bewegt sich am Rand eures Blickfelds und ist sofort wieder verschwunden.",
+    "Eine Spur im Staub fuehrt weiter, als sie sollte.",
+    "Ein leises Klopfen antwortet, kaum hoerbar, aus der falschen Richtung.",
+    "Der Weg gabelt sich, und beide Richtungen sehen falsch aus.",
+]
+
+_SUGGESTION_POOL: list[tuple[str, str, str]] = [
+    ("investigate", "Die Umgebung untersuchen", "Vielleicht verraet ein Detail mehr."),
+    ("talk", "Das Gespraech suchen", "Worte oeffnen manchmal mehr Tueren als Gewalt."),
+    ("sneak", "Sich unbemerkt naehern", "Leise sein kostet Ausdauer, aber spart Blut."),
+    ("attack", "Angreifen", "Direkt, laut und gefaehrlich."),
+    ("cast", "Magie wirken", "Kostet Mana."),
+    ("use_item", "Gegenstand einsetzen", "Ein Blick ins Inventar lohnt sich."),
+    ("flee", "Rueckzug antreten", "Ueberleben ist auch ein Ergebnis."),
+]
+
+
+class MockLLMProvider:
+    """Erzeugt nachvollziehbare Inhalte ohne externen Dienst."""
+
+    name = "mock"
+
+    def __init__(self, *, seed: int | None = None) -> None:
+        self._random = random.Random(seed)
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        context = _parse_context(request.prompt)
+        builders = {
+            "world": self._build_world,
+            "turn": self._build_turn,
+            "summary": self._build_summary,
+            "character": self._build_character,
+        }
+        builder = builders.get(request.purpose, self._build_turn)
+        return LLMResponse(text=json.dumps(builder(context), ensure_ascii=False), model="mock")
+
+    async def aclose(self) -> None:  # pragma: no cover - nichts freizugeben
+        return None
+
+    # -- Bausteine ------------------------------------------------------
+
+    def _characters(self, context: dict[str, Any]) -> list[str]:
+        names = [
+            str(entry.get("name"))
+            for entry in context.get("characters", [])
+            if isinstance(entry, dict) and entry.get("name")
+        ]
+        return names or ["Die Gruppe"]
+
+    def _suggestions(self, context: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+        result: dict[str, list[dict[str, str]]] = {}
+        for name in self._characters(context):
+            picks = self._random.sample(_SUGGESTION_POOL, k=4)
+            result[name] = [
+                {"kind": kind, "label": label, "hint": hint} for kind, label, hint in picks
+            ]
+        return result
+
+    def _build_world(self, context: dict[str, Any]) -> dict[str, Any]:
+        settings = context.get("settings", {}) if isinstance(context, dict) else {}
+        genre = str(settings.get("genre", "fantasy"))
+        world = str(settings.get("world") or "Die Grenzlande von Aschenfurt")
+        location = f"{world} - Marktplatz"
+        npc = "Hedda Vorn"
+        changes: list[dict[str, Any]] = [
+            {
+                "op": "location.create",
+                "name": location,
+                "description": (
+                    f"Ein Platz im Zentrum von {world}. Der Brunnen ist trocken, "
+                    "die Staende sind halb abgebaut."
+                ),
+                "discovered": True,
+                "reason": "Startort der Kampagne",
+            },
+            {
+                "op": "location.create",
+                "name": f"{world} - Alte Zisterne",
+                "description": "Unter dem Marktplatz, nur ueber einen schmalen Schacht erreichbar.",
+                "discovered": False,
+                "reason": "Ziel der ersten Quest",
+            },
+            {
+                "op": "entity.create",
+                "name": npc,
+                "kind": "npc",
+                "description": "Brunnenmeisterin, misstrauisch, weiss mehr, als sie zugibt.",
+                "location": location,
+                "data": {"attitude": "wachsam"},
+                "reason": "Auftraggeberin",
+            },
+            {
+                "op": "quest.create",
+                "title": "Das versiegte Wasser",
+                "description": (
+                    "Findet heraus, warum der Brunnen von "
+                    f"{world} seit sieben Tagen trocken liegt."
+                ),
+                "giver": npc,
+                "is_main": True,
+                "reason": "Einstiegsquest",
+            },
+            {
+                "op": "fact.assert",
+                "key": "well.dry",
+                "statement": f"Der Brunnen von {world} ist seit sieben Tagen trocken.",
+                "visibility": "public",
+                "reason": "Ausgangslage",
+            },
+            {
+                "op": "fact.assert",
+                "key": "cistern.blocked",
+                "statement": "Die Zisterne wurde absichtlich zugemauert.",
+                "visibility": "secret",
+                "reason": "Geheimnis hinter der Quest",
+            },
+            {
+                "op": "knowledge.grant",
+                "subject": "public",
+                "subject_type": "public",
+                "content": f"Der Brunnen von {world} ist trocken. Niemand weiss, warum.",
+                "certainty": "truth",
+                "reason": "Oeffentlich bekannt",
+            },
+            {
+                "op": "knowledge.grant",
+                "subject": npc,
+                "subject_type": "entity",
+                "content": "Hedda hat gesehen, wie nachts Steine in die Zisterne geschafft wurden.",
+                "certainty": "truth",
+                "reason": "NSC-Wissen",
+            },
+        ]
+        for name in self._characters(context):
+            changes.append(
+                {
+                    "op": "character.move",
+                    "character": name,
+                    "location": location,
+                    "reason": "Startaufstellung",
+                }
+            )
+        return {
+            "world_summary": (
+                f"Ein {genre}-Abenteuer in {world}. Die Gruppe trifft am Marktplatz ein, "
+                "waehrend die Stadt langsam verdurstet."
+            ),
+            "scene_title": "Ankunft am trockenen Brunnen",
+            "narration": (
+                f"{self._random.choice(_OPENINGS)} {world} empfaengt euch mit leeren Eimern "
+                "und misstrauischen Blicken. Am Brunnen steht eine Frau mit verschraenkten "
+                "Armen und mustert euch, als waeret ihr die naechste schlechte Nachricht."
+            ),
+            "public_events": [f"Die Gruppe erreicht {location}."],
+            "private_messages": [],
+            "suggestions": self._suggestions(context),
+            "changes": changes,
+            "audio_hint": "ruhig, erwartungsvoll",
+        }
+
+    def _build_turn(self, context: dict[str, Any]) -> dict[str, Any]:
+        results = context.get("action_results", [])
+        lines: list[str] = []
+        changes: list[dict[str, Any]] = []
+        public_events: list[str] = []
+
+        for entry in results if isinstance(results, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            actor = str(entry.get("character") or "Jemand")
+            text = str(entry.get("text") or "handelt")
+            if not entry.get("allowed", True):
+                lines.append(f"{actor} setzt an, doch es gelingt nicht: {entry.get('reason', '')}")
+                continue
+            degree = str(entry.get("degree") or "")
+            if degree in ("critical_success", "success"):
+                lines.append(f"{actor} hat Erfolg: {text}")
+                public_events.append(f"{actor}: {text} (Erfolg)")
+                changes.append(
+                    {
+                        "op": "knowledge.grant",
+                        "subject": actor,
+                        "subject_type": "character",
+                        "content": f"Erkenntnis aus eigener Handlung: {text}",
+                        "certainty": "truth",
+                        "reason": "gelungene Probe",
+                    }
+                )
+            elif degree == "partial":
+                lines.append(f"{actor} kommt nur halb durch: {text}")
+                public_events.append(f"{actor}: {text} (Teilerfolg)")
+            else:
+                lines.append(f"{actor} scheitert: {text}")
+                public_events.append(f"{actor}: {text} (Fehlschlag)")
+
+        if not lines:
+            lines.append("Die Gruppe zoegert, und die Szene haelt den Atem an.")
+
+        return {
+            "scene_title": str(context.get("scene_title") or "Fortsetzung"),
+            "narration": " ".join(lines) + " " + self._random.choice(_BEATS),
+            "public_events": public_events,
+            "private_messages": [],
+            "suggestions": self._suggestions(context),
+            "changes": changes,
+            "audio_hint": "angespannt",
+        }
+
+    def _build_summary(self, context: dict[str, Any]) -> dict[str, Any]:
+        events = context.get("events", [])
+        highlights = [
+            str(entry.get("summary"))
+            for entry in events if isinstance(entry, dict) and entry.get("summary")
+        ][-6:]
+        return {
+            "text": " ".join(highlights) or "Bislang ist wenig Berichtenswertes geschehen.",
+            "highlights": highlights,
+        }
+
+    def _build_character(self, context: dict[str, Any]) -> dict[str, Any]:
+        first = ["Kell", "Maren", "Ondra", "Tibor", "Selk", "Yara", "Brun", "Ilva"]
+        last = ["Graustein", "vom Moor", "Aschenhand", "Wolkental", "Ohnegleichen"]
+        classes = ["Krieger", "Magier", "Schurke", "Barde", "Kleriker"]
+        races = ["Mensch", "Elf", "Zwerg", "Halbling", "Ork"]
+        return {
+            "name": f"{self._random.choice(first)} {self._random.choice(last)}",
+            "race": self._random.choice(races),
+            "class": self._random.choice(classes),
+            "background": (
+                "Kam vor Jahren mit nichts als einem Namen und einer Schuld in diese Gegend."
+            ),
+            "avatar": self._random.choice(["🗡️", "🔮", "🏹", "🎻", "🛡️"]),
+            "abilities": ["Zaeher Wille", "Scharfes Auge"],
+            "items": ["Reiseproviant", "Fackel"],
+        }
+
+
+def _parse_context(prompt: str) -> dict[str, Any]:
+    """Liest den JSON-Kontextblock aus dem Prompt."""
+    match = _CONTEXT_BLOCK.search(prompt)
+    if not match:
+        return {}
+    try:
+        parsed = json.loads(match.group(1))
+    except json.JSONDecodeError:  # pragma: no cover - defensiv
+        return {}
+    return parsed if isinstance(parsed, dict) else {}

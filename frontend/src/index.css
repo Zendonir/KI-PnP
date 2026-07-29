@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/* Farbwelt der Anwendung: dunkel, warm, gut lesbar bei Kerzenlicht. */
+@theme {
+  --color-ink-950: #07070d;
+  --color-ink-900: #0b0b12;
+  --color-ink-800: #14141f;
+  --color-ink-700: #1e1e2d;
+  --color-ink-600: #2b2b3f;
+  --color-parchment: #ece3d2;
+  --color-ember-400: #e0a458;
+  --color-ember-500: #c9812f;
+  --color-blood-500: #a33a3a;
+  --color-moss-500: #4d7c5a;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-ink-900);
+  color: var(--color-parchment);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Verhindert das Gummiband-Scrollen auf iOS. */
+  overscroll-behavior-y: none;
+}
+
+/* Sichere Bereiche fuer Geraete mit Notch. */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Dezente Bildlaufleiste. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-enter {
+  animation: fade-rise 0.25s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-enter {
+    animation: none;
+  }
+}

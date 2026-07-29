@@ -1,0 +1,108 @@
+# Änderungsprotokoll
+
+Alle bemerkenswerten Änderungen an diesem Projekt werden hier festgehalten.
+
+Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
+die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
+
+## [Unveröffentlicht]
+
+## [0.1.0] – 2026-07-29
+
+Erste Ausbaustufe: eine vollständig spielbare, containerisierte Plattform.
+
+### Hinzugefügt
+
+**Plattform und Betrieb**
+
+- Vollständige Docker-Compose-Umgebung: Backend, Frontend, PostgreSQL, Redis
+  und Caddy als Reverse Proxy
+- Optionale Profile für ein lokales Sprachmodell (`local-ai`, Ollama) und
+  einen Medien-Worker (`worker`)
+- Automatisches HTTPS über Caddy, sobald `SITE_ADDRESS` auf eine Domain zeigt
+- Migrationen laufen beim Start automatisch; der Container wartet zuvor auf
+  die Datenbank
+
+**Spielablauf**
+
+- Runde erstellen mit Genre, Spielwelt, Schwierigkeitsgrad, Dauer,
+  Spieleranzahl, Regelkomplexität, Spielstil, Stimmung und Kampagnenform
+- Beitritt über sechsstelligen Code, Beitrittslink oder QR-Code
+- Charaktererstellung von Hand oder als KI-Vorschlag, mit regelwerkabhängigen
+  Startwerten, Fähigkeiten und Startinventar
+- Weltgenerierung zum Spielstart: Orte, NSC mit Geheimnissen, Hauptquest,
+  Fakten, Wissenseinträge und die erste Szene
+- Rundenschleife mit individuellen Handlungsvorschlägen je Charakter und
+  freier Texteingabe; der Zug löst automatisch auf, sobald alle
+  handlungsfähigen Spieler eingereicht haben
+
+**Spiellogik im Backend**
+
+- Zweiphasige Auflösung: erst Regelprüfung, Kosten und Würfe festschreiben,
+  dann die KI erzählen lassen. Fällt die KI aus, bleiben die Ergebnisse
+  erhalten und der Zug kann neu erzählt werden
+- Würfelmechanik mit Erfolgsgraden von Patzer bis kritischem Erfolg
+- Austauschbare Regelwerke (`classic`, `grit`) über ein `RuleSet`-Protokoll
+- Prüfung jeder Handlung auf Handlungsfähigkeit, blockierende Zustände,
+  Ressourcen und Inventar
+- Validierung sämtlicher KI-Änderungsvorschläge gegen die Datenbank;
+  abgelehnte Vorschläge werden mit Begründung protokolliert
+
+**Persistenz und Gedächtnis**
+
+- 26 Tabellen für Runden, Spieler, Charaktere, Werte, Fähigkeiten,
+  Gegenstände, Inventare, Quests, Orte, Weltobjekte, Beziehungen, Fakten,
+  Wissen, Züge, Handlungen, Ereignisse, Würfe, Narrationen,
+  Zusammenfassungen, Audio- und Bildaufträge
+- Event Sourcing mit lückenloser Sequenznummer je Runde; Ereignisse werden
+  nur angehängt
+- Faktensystem mit Quelle, Zeitpunkt, Sichtbarkeit und Gültigkeit; Fakten
+  werden entwertet statt gelöscht
+- Wissenssystem mit Trennung von Wahrheit, öffentlichem Wissen,
+  Spielerwissen, NSC-Wissen, Vermutungen und Lügen
+- Automatische Zusammenfassungen als Langzeitgedächtnis; der KI-Kontext
+  bleibt dadurch auch nach tausenden Zügen konstant klein
+
+**Schnittstellen**
+
+- REST-API mit automatisch erzeugter OpenAPI-Beschreibung unter `/api/docs`
+- WebSocket für Echtzeit-Synchronisation, optional über Redis für mehrere
+  Backend-Instanzen
+- JWT-basierter Zugang, an Spieler und Runde gebunden
+- Austauschbare KI-Anbieter: `mock` (offline, ohne Schlüssel spielbar),
+  `anthropic`, OpenAI-kompatibel und `ollama`
+- Austauschbare Sprachausgabe: `none`, `browser`, `openai`
+
+**Oberfläche**
+
+- Installierbare PWA für iPhone und Android, auf Smartphones ausgelegt
+- Erzählstrang mit Narration, privaten Hinweisen und Würfelprotokoll
+- Charakterbogen, Inventar, Quests, Weltübersicht und Spielverlauf
+- Sprachausgabe im Browser mit Stimmenauswahl und Wiederholung
+- Moderationsfunktionen für die Spielleitung: pausieren, fortsetzen, Zug
+  auflösen, KI neu erzählen lassen, Szene überspringen, zusammenfassen,
+  Audio wiederholen, Spieler entfernen, Runde beenden
+
+**Qualitätssicherung**
+
+- 57 Tests gegen SQLite und den Offline-Spielleiter, ohne Docker, ohne Netz
+  und ohne API-Schlüssel
+- Abgedeckt: Würfelmechanik, Regelprüfungen, vollständiger Rundenablauf,
+  Rechteprüfung, Sichtbarkeit von Geheimnissen und Lückenlosigkeit des
+  Ereignisprotokolls
+- Strikte Typprüfung im Frontend, statische Analyse im Backend
+- Alembic-Migration ohne Schema-Drift gegenüber den Modellen
+
+### Vorbereitet, aber noch nicht ausgeführt
+
+Die folgenden Punkte sind im Datenmodell und in den Schnittstellen angelegt,
+aber bewusst noch nicht implementiert, da sie zum Testen jeweils Geräte oder
+externe Dienste voraussetzen:
+
+- Serverseitige Sprachsynthese über den Medien-Worker
+- Bildgenerierung (Tabelle `images` und Anbieterschnittstelle vorhanden)
+- Kartenansicht
+- Audio-Ziele Sonos, Chromecast, Home Assistant und AirPlay
+
+[Unveröffentlicht]: https://github.com/Zendonir/KI-PnP/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Zendonir/KI-PnP/releases/tag/v0.1.0

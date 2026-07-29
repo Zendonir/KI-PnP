@@ -1,0 +1,112 @@
+name: ki-pnp
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kipnp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kipnp}
+      POSTGRES_DB: ${POSTGRES_DB:-kipnp}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kipnp} -d ${POSTGRES_DB:-kipnp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [kipnp]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [kipnp]
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kipnp}:${POSTGRES_PASSWORD:-kipnp}@db:5432/${POSTGRES_DB:-kipnp}
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      JWT_SECRET: ${JWT_SECRET:-bitte-in-produktion-aendern}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_MODEL: ${AI_MODEL:-claude-opus-5}
+      AI_EFFORT: ${AI_EFFORT:-high}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      TTS_PROVIDER: ${TTS_PROVIDER:-browser}
+      ENVIRONMENT: ${ENVIRONMENT:-prod}
+    networks: [kipnp]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-/api/v1}
+    restart: unless-stopped
+    networks: [kipnp]
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [backend, frontend]
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    networks: [kipnp]
+
+  # Optional: lokales Sprachmodell. Start mit:
+  #   docker compose --profile local-ai up -d
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    networks: [kipnp]
+
+  # Optional: Worker fuer TTS- und Bildauftraege.
+  #   docker compose --profile worker up -d
+  worker:
+    build: ./backend
+    profiles: ["worker"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kipnp}:${POSTGRES_PASSWORD:-kipnp}@db:5432/${POSTGRES_DB:-kipnp}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-bitte-in-produktion-aendern}
+      TTS_PROVIDER: ${TTS_PROVIDER:-browser}
+    command: ["python", "-m", "app.workers.media"]
+    networks: [kipnp]
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
+  ollama-data:
+
+networks:
+  kipnp:
+    driver: bridge
