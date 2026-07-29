@@ -1,0 +1,32 @@
+# Reverse Proxy fuer KI-PnP.
+#
+# Lokal laeuft alles ueber HTTP auf Port 80 des Containers. Fuer den Betrieb
+# unter einer echten Domain genuegt SITE_ADDRESS=example.org -- Caddy holt
+# dann automatisch ein Let's-Encrypt-Zertifikat, was fuer PWA-Installation
+# und Mikrofon-/Audiorechte auf Smartphones noetig ist.
+
+{$SITE_ADDRESS::80} {
+	encode gzip zstd
+
+	# REST-API und WebSockets
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Frontend (React-PWA)
+	handle {
+		reverse_proxy frontend:80
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

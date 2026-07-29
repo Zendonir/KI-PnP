@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+dev-dist/
+.vite/
+
+# Lokale Konfiguration und Werkzeuge
+.env
+.env.local
+.DS_Store
+
+# Build-Metadaten
+*.tsbuildinfo

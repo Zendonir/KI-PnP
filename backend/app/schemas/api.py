@@ -1,0 +1,290 @@
+"""Datenvertraege der REST-API.
+
+Alle Ein- und Ausgaben sind streng typisiert; daraus erzeugt FastAPI die
+OpenAPI-Beschreibung automatisch.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+Genre = Literal["fantasy", "scifi", "horror", "mystery", "cyberpunk", "postapocalyptic", "western"]
+Difficulty = Literal["story", "easy", "normal", "hard", "deadly"]
+Duration = Literal["oneshot", "short", "medium", "long", "campaign"]
+Complexity = Literal["narrative", "light", "crunchy"]
+PlayStyle = Literal["combat", "exploration", "roleplay", "balanced", "puzzle"]
+CampaignType = Literal["free", "structured"]
+
+
+class Schema(BaseModel):
+    """Basis mit gemeinsamer Konfiguration."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+# --- Einstellungen ------------------------------------------------------
+
+
+class GameSettingsIn(Schema):
+    genre: Genre = "fantasy"
+    world: str = Field(default="", max_length=200)
+    difficulty: Difficulty = "normal"
+    duration: Duration = "medium"
+    max_players: int = Field(default=6, ge=1, le=32)
+    rule_complexity: Complexity = "light"
+    play_style: PlayStyle = "balanced"
+    tone: str = Field(default="heroic", max_length=30)
+    campaign_type: CampaignType = "free"
+    ruleset: str = "classic"
+    language: str = Field(default="de", max_length=10)
+    tts_enabled: bool = True
+    audio_targets: list[str] = Field(default_factory=lambda: ["browser"])
+    ai_provider: str | None = None
+    ai_model: str | None = None
+
+
+class GameSettingsOut(GameSettingsIn):
+    debug_mode: bool = False
+    summary_every_n_events: int = 40
+
+
+# --- Spiel und Spieler --------------------------------------------------
+
+
+class PlayerOut(Schema):
+    id: uuid.UUID
+    name: str
+    role: str
+    is_active: bool
+    is_connected: bool
+
+
+class GameOut(Schema):
+    id: uuid.UUID
+    code: str
+    name: str
+    status: str
+    current_turn_number: int
+    created_at: datetime
+    settings: GameSettingsOut
+
+
+class GameCreateRequest(Schema):
+    name: str = Field(min_length=1, max_length=200)
+    host_name: str = Field(min_length=1, max_length=80)
+    settings: GameSettingsIn = Field(default_factory=GameSettingsIn)
+
+
+class JoinRequest(Schema):
+    player_name: str = Field(min_length=1, max_length=80)
+
+
+class SessionOut(Schema):
+    """Antwort nach Erstellen oder Beitreten."""
+
+    game: GameOut
+    player: PlayerOut
+    token: str
+    join_url: str
+    qr_url: str
+
+
+# --- Charaktere ---------------------------------------------------------
+
+
+class StatOut(Schema):
+    key: str
+    value: int
+    max_value: int | None = None
+
+
+class InventoryEntryOut(Schema):
+    id: uuid.UUID
+    name: str
+    description: str = ""
+    kind: str = "misc"
+    quantity: int = 1
+    equipped: bool = False
+    slot: str | None = None
+
+
+class CharacterOut(Schema):
+    id: uuid.UUID
+    player_id: uuid.UUID | None
+    name: str
+    race: str
+    char_class: str = Field(alias="class")
+    background: str
+    avatar: str
+    level: int
+    experience: int
+    is_alive: bool
+    conditions: list[str]
+    location: str | None = None
+    stats: list[StatOut] = Field(default_factory=list)
+    abilities: list[str] = Field(default_factory=list)
+    inventory: list[InventoryEntryOut] = Field(default_factory=list)
+
+
+class CharacterCreateRequest(Schema):
+    name: str = Field(default="", max_length=80)
+    race: str = Field(default="", max_length=60)
+    char_class: str = Field(default="", max_length=60, alias="class")
+    background: str = Field(default="", max_length=2000)
+    avatar: str = Field(default="", max_length=80)
+    randomize: bool = False
+
+
+# --- Runden und Handlungen ---------------------------------------------
+
+
+class SuggestionOut(Schema):
+    kind: str
+    label: str
+    hint: str = ""
+
+
+class ActionOut(Schema):
+    id: uuid.UUID
+    player_id: uuid.UUID
+    character_id: uuid.UUID | None
+    kind: str
+    text: str
+    status: str
+    rejection_reason: str | None = None
+    outcome: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionSubmitRequest(Schema):
+    kind: str = "custom"
+    text: str = Field(min_length=1, max_length=1000)
+    target_ref: str | None = Field(default=None, max_length=120)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiceRollOut(Schema):
+    id: uuid.UUID
+    character_id: uuid.UUID | None
+    notation: str
+    rolls: list[int]
+    modifier: int
+    total: int
+    difficulty: int | None
+    success: bool | None
+    degree: str
+    reason: str
+    created_at: datetime
+
+
+class NarrationOut(Schema):
+    id: uuid.UUID
+    kind: str
+    scene_title: str
+    text: str
+    audience_player_id: uuid.UUID | None = None
+    created_at: datetime
+
+
+class TurnOut(Schema):
+    id: uuid.UUID
+    number: int
+    status: str
+    scene_title: str
+    submitted_player_ids: list[uuid.UUID] = Field(default_factory=list)
+    my_suggestions: list[SuggestionOut] = Field(default_factory=list)
+
+
+class EventOut(Schema):
+    id: uuid.UUID
+    seq: int
+    type: str
+    summary: str
+    turn_number: int
+    visibility: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class QuestOut(Schema):
+    id: uuid.UUID
+    title: str
+    description: str
+    status: str
+    is_main: bool
+
+
+class LocationOut(Schema):
+    id: uuid.UUID
+    name: str
+    description: str
+    is_discovered: bool
+
+
+class EntityOut(Schema):
+    id: uuid.UUID
+    name: str
+    kind: str
+    description: str
+    is_alive: bool
+
+
+class FactOut(Schema):
+    key: str
+    statement: str
+    visibility: str
+    turn_number: int
+
+
+class AudioOut(Schema):
+    id: uuid.UUID
+    status: str
+    provider: str
+    target: str
+    url: str | None
+    text: str
+    voice: str
+
+
+class SummaryOut(Schema):
+    id: uuid.UUID
+    text: str
+    highlights: list[str]
+    turn_number: int
+    created_at: datetime
+
+
+class GameStateOut(Schema):
+    """Vollstaendiger, spielerspezifisch gefilterter Zustand."""
+
+    game: GameOut
+    players: list[PlayerOut]
+    characters: list[CharacterOut]
+    me: PlayerOut
+    my_character: CharacterOut | None
+    turn: TurnOut | None
+    narrations: list[NarrationOut]
+    dice_rolls: list[DiceRollOut]
+    quests: list[QuestOut]
+    locations: list[LocationOut]
+    entities: list[EntityOut]
+    facts: list[FactOut]
+    knowledge: list[str]
+    events: list[EventOut]
+    audio: AudioOut | None
+    is_host: bool
+
+
+# --- Administration -----------------------------------------------------
+
+
+class AdminKickRequest(Schema):
+    player_id: uuid.UUID
+
+
+class OkResponse(Schema):
+    ok: bool = True
+    message: str = ""
