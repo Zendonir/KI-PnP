@@ -116,6 +116,13 @@ docker compose --profile local-ai up -d    # lokales Modell über Ollama
 docker compose --profile worker up -d      # Worker für Sprachausgabe
 ```
 
+### Auf TrueNAS SCALE
+
+Für TrueNAS ab 24.10 liegt eine fertige App-Definition bereit, die die
+veröffentlichten Images aus der GitHub Container Registry verwendet — siehe
+[`deploy/truenas/`](deploy/truenas/). Dort genügt *Custom App* →
+*Install via YAML*.
+
 ### Ohne Docker (Entwicklung)
 
 ```bash

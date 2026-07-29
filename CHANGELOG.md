@@ -7,6 +7,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+
+- Fortlaufende Integration: Tests, statische Analyse, Typprüfung und Build
+  laufen bei jedem Push und Pull Request; zusätzlich wird geprüft, ob
+  Migration und Modelle auseinanderlaufen
+- Veröffentlichung der Container-Images in der GitHub Container Registry bei
+  jedem Tag `v*` sowie auf Zuruf über *Run workflow*
+- App-Definition für TrueNAS SCALE ab 24.10 unter `deploy/truenas/`
+
+### Geändert
+
+- Der Frontend-Container reicht Anfragen unter `/api` nun selbst an das
+  Backend weiter, einschließlich WebSocket. Damit genügt für einen
+  Einzelplatz-Betrieb ein einziger veröffentlichter Port; ein zusätzlicher
+  Reverse Proxy ist nur noch für TLS oder mehrere Instanzen nötig.
+
 ## [0.1.0] – 2026-07-29
 
 Erste Ausbaustufe: eine vollständig spielbare, containerisierte Plattform.

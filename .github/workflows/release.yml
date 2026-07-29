@@ -1,0 +1,82 @@
+name: Release-Images
+
+# Baut die Container-Images und veroeffentlicht sie in der GitHub Container
+# Registry (GHCR). Ausgeloest von jedem Tag "v*" oder von Hand ueber
+# "Run workflow" -- letzteres ist nuetzlich, um ohne neuen Tag ein
+# ":latest"-Image zu erzeugen.
+#
+# TrueNAS SCALE laeuft ausschliesslich auf x86-64, deshalb wird bewusst nur
+# linux/amd64 gebaut. Fuer weitere Architekturen genuegt es, "platforms" um
+# z. B. linux/arm64 zu ergaenzen (verlaengert den Lauf deutlich).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    name: ${{ matrix.component }}-Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            context: ./backend
+          - component: frontend
+            context: ./frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: An GHCR anmelden
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bezeichner und Beschriftungen ermitteln
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.component }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=KI-PnP ${{ matrix.component }}
+            org.opencontainers.image.description=KI-gestuetzte Pen-&-Paper-Plattform
+            org.opencontainers.image.licenses=NOASSERTION
+
+      - name: Bauen und veroeffentlichen
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Ergebnis zusammenfassen
+        run: |
+          {
+            echo "### ${{ matrix.component }}"
+            echo
+            echo "Veroeffentlichte Bezeichner:"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
