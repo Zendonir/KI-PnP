@@ -45,11 +45,19 @@ docker login ghcr.io -u <github-benutzername>
 
    | Stelle | Bedeutung |
    |---|---|
-   | `POSTGRES_PASSWORD` und `DATABASE_URL` | Datenbankkennwort, muss an **beiden** Stellen identisch sein |
+   | `POSTGRES_PASSWORD` und `DATABASE_URL` | Datenbankkennwort, muss an **beiden** Stellen identisch sein und darf nur Buchstaben, Ziffern, `-` und `_` enthalten (siehe unten) |
    | `PUBLIC_BASE_URL` | Adresse im Netz, z. B. `http://192.168.1.50:30080` — landet im QR-Code |
    | `JWT_SECRET` | eigenes Geheimnis, z. B. aus `openssl rand -hex 32` |
 
 4. Namen vergeben (etwa `ki-pnp`) und installieren
+
+> **Zum Datenbankkennwort:** Es steht in `DATABASE_URL` mitten in einer
+> Verbindungsadresse. Zeichen wie `@ : / ? # %` haben dort eine eigene
+> Bedeutung — das Backend läse die Adresse dann anders als gemeint und käme
+> nicht an die Datenbank, während PostgreSQL das Kennwort unverändert
+> bekommt. Der Fehler ist schwer zu finden, deshalb: nur Buchstaben,
+> Ziffern, `-` und `_` verwenden. `openssl rand -hex 24` liefert immer ein
+> passendes Kennwort.
 
 Der erste Start dauert etwas: das Backend wartet auf die Datenbank und spielt
 anschließend die Migrationen ein. Sobald alle drei Container laufen, ist die
