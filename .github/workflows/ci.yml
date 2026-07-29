@@ -4,8 +4,10 @@ name: CI
 # den Offline-Spielleiter, brauchen also weder Docker noch API-Schluessel.
 
 on:
+  # Nur main: fuer Arbeitszweige greift bereits der pull_request-Ausloeser,
+  # sonst liefe jede Pruefung doppelt.
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
