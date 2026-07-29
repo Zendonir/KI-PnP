@@ -1,0 +1,98 @@
+# KI-PnP als TrueNAS-App (SCALE 24.10 "ElectricEel" oder neuer)
+#
+# Einbinden ueber:  Apps -> Discover Apps -> Custom App -> Install via YAML
+# Diesen Inhalt vollstaendig einfuegen und vorher die drei mit
+# ">>> ANPASSEN" markierten Stellen aendern.
+#
+# Wichtig: TrueNAS ersetzt in diesem Feld KEINE Variablen der Form ${...}.
+# Alle Werte stehen deshalb bewusst als Klartext hier drin.
+#
+# Der Frontend-Container liefert die Oberflaeche aus und reicht /api an das
+# Backend weiter. Nach aussen ist deshalb nur ein einziger Port noetig.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kipnp
+      POSTGRES_DB: kipnp
+      # >>> ANPASSEN (1/3): eigenes Datenbankkennwort setzen.
+      # Muss unten in DATABASE_URL identisch wiederholt werden.
+      #
+      # Nur Buchstaben, Ziffern, Bindestrich und Unterstrich verwenden!
+      # Zeichen wie @ : / ? # % haben in einer Verbindungsadresse eine
+      # eigene Bedeutung. Das Backend wuerde die Adresse dann anders lesen
+      # als gemeint und sich nicht verbinden koennen, waehrend PostgreSQL
+      # das Kennwort unveraendert erhaelt -- ein schwer zu findender Fehler.
+      # Ein passendes Kennwort liefert:  openssl rand -hex 24
+      POSTGRES_PASSWORD: bitte-datenbank-kennwort-aendern
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kipnp -d kipnp"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    image: ghcr.io/zendonir/ki-pnp-backend:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Kennwort muss mit POSTGRES_PASSWORD oben uebereinstimmen -- und
+      # ebenso frei von Sonderzeichen sein (siehe Hinweis dort).
+      DATABASE_URL: postgresql+asyncpg://kipnp:bitte-datenbank-kennwort-aendern@db:5432/kipnp
+
+      # >>> ANPASSEN (2/3): Adresse, unter der die App im Netz erreichbar ist.
+      # Genau diese Adresse landet im QR-Code und im Beitrittslink. Steht hier
+      # etwas Falsches, koennen Mitspieler den Code nicht scannen.
+      # Beispiel: http://192.168.1.50:30080
+      PUBLIC_BASE_URL: http://TRUENAS-IP-EINTRAGEN:30080
+
+      # >>> ANPASSEN (3/3): eigenes Token-Geheimnis setzen, z. B. erzeugt mit
+      #     openssl rand -hex 32
+      # Eine spaetere Aenderung meldet alle Spieler ab.
+      JWT_SECRET: bitte-eigenes-geheimnis-eintragen
+
+      # Spielleiter-KI. "mock" laeuft ohne Schluessel und ohne Internet und
+      # ist zum Ausprobieren voellig ausreichend.
+      # Fuer echte KI: AI_PROVIDER auf "anthropic" setzen und den Schluessel
+      # bei ANTHROPIC_API_KEY eintragen.
+      AI_PROVIDER: mock
+      AI_MODEL: claude-opus-5
+      AI_EFFORT: high
+      ANTHROPIC_API_KEY: ""
+
+      # Sprachausgabe erfolgt im Browser der Spieler, kein Dienst noetig.
+      TTS_PROVIDER: browser
+      ENVIRONMENT: prod
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  frontend:
+    image: ghcr.io/zendonir/ki-pnp-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      # Links der Port auf dem TrueNAS-Server, rechts der im Container.
+      # 80 und 443 gehoeren der TrueNAS-Oberflaeche und sind tabu.
+      # Wird hier etwas anderes als 30080 gewaehlt, muss PUBLIC_BASE_URL
+      # oben denselben Port nennen.
+      - "30080:80"
+
+volumes:
+  # Von Docker verwaltet und liegt im ix-apps-Datensatz. Ueberlebt Updates
+  # und Neustarts der App. Wer die Daten lieber sichtbar im Pool haette,
+  # ersetzt den Eintrag bei "db" durch einen Pfad, etwa:
+  #   - /mnt/tank/apps/ki-pnp/postgres:/var/lib/postgresql/data
+  # Das Verzeichnis muss dann vorher als Datensatz angelegt werden.
+  postgres-data:
