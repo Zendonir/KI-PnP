@@ -206,6 +206,8 @@ Die API-Dokumentation erzeugt FastAPI automatisch: <http://localhost:8080/api/do
 
 ## Status
 
+Aktuelle Version: **0.1.0** — siehe [CHANGELOG.md](CHANGELOG.md).
+
 Erste vollständige Ausbaustufe: Lobby, Charaktererstellung, Weltgenerierung,
 Rundenschleife mit Würfeln und Validierung, Event Sourcing, Fakten- und
 Wissenssystem, Zusammenfassungen, Echtzeit-Synchronisation, Sprachausgabe im
