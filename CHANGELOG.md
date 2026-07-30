@@ -88,6 +88,17 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Einzelplatz-Betrieb ein einziger veröffentlichter Port; ein zusätzlicher
   Reverse Proxy ist nur noch für TLS oder mehrere Instanzen nötig.
 
+### Behoben
+
+- Rundenstart schlug mit einem Datenbankfehler fehl, wenn zwischen dem
+  Anlegen eines Charakters und dem Klick auf „Abenteuer starten" mehr als
+  eine automatische Statusabfrage lag (praktisch jede Lobby-Wartezeit über
+  ~12 Sekunden). Ursache: `GET .../state` legte für Spieler ohne laufenden
+  Zug vorsorglich schon einen Zug „Nummer 1" an, obwohl die Runde noch gar
+  nicht lief — der echte erste Zug beim Start kollidierte dann mit dieser
+  Nummer. Die Rückfallregel greift jetzt nur noch, wenn die Runde bereits
+  aktiv ist.
+
 ## [0.1.0] – 2026-07-29
 
 Erste Ausbaustufe: eine vollständig spielbare, containerisierte Plattform.

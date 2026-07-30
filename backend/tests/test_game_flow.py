@@ -245,6 +245,30 @@ class TestGameStart:
         )
         assert response.status_code == 409
 
+    async def test_lobby_state_poll_does_not_create_premature_turn(
+        self, client: AsyncClient
+    ) -> None:
+        """Regression: ein /state-Abgleich waehrend der Lobby-Wartezeit legte
+        frueher einen verwaisten Zug "Nummer 1" an, obwohl die Runde noch gar
+        nicht lief -- der echte Rundenstart kollidierte dann mit dessen
+        Nummer und schlug mit einem Datenbankfehler fehl."""
+        session = await _create_game(client)
+        game_id = session["game"]["id"]
+        await _create_character(client, game_id, session["token"], "Kell", "Krieger")
+
+        # Simuliert den periodischen Abgleich, waehrend die Spielleitung noch
+        # in der Lobby wartet.
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
+        ).json()
+        assert state["turn"] is None, "Vor dem Start darf noch kein Zug existieren"
+
+        response = await client.post(
+            f"/api/v1/games/{game_id}/start", headers=auth(session["token"])
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["turn"]["number"] == 1
+
 
 class TestTurnLoop:
     async def test_turn_resolves_when_all_submitted(

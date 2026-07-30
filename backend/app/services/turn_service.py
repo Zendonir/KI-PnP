@@ -170,8 +170,19 @@ class TurnService:
         bereits proaktiv bei der vorigen Rundenaufloesung
         (_sync_location_turns), dieser Weg greift nur, wenn das ausnahmsweise
         nicht der Fall war. Ein toter Charakter braucht keinen Zug.
+
+        Vor dem eigentlichen Rundenstart gibt es grundsaetzlich keine Zuege:
+        ohne diese Sperre wuerde ein Spieler, der waehrend der Lobby-
+        Wartezeit einen /state-Abgleich abschickt, hier einen verwaisten Zug
+        ohne Ort anlegen. bootstrap_world setzt current_turn_number beim
+        Start bewusst auf 0 zurueck, damit der erste echte Zug die Nummer 1
+        traegt -- kollidiert das mit einem schon vorhandenen, verwaisten Zug
+        derselben Nummer, schlaegt der Rundenstart mit einem
+        Datenbankfehler fehl.
         """
         if not character.is_alive:
+            return None
+        if game.status != "active":
             return None
         game = await self._lock_game(game)
         synced = await self._sync_location_turns(
