@@ -366,6 +366,9 @@ function TableView({
   const visibleNarrations = pendingNarrationIds.size
     ? state.narrations.filter((item) => !pendingNarrationIds.has(item.id))
     : state.narrations;
+  const visibleRolls = pendingReveal
+    ? state.dice_rolls.filter((roll) => roll.turn_id !== pendingReveal.turnId)
+    : state.dice_rolls;
   const visibleLatestNarration = visibleNarrations.at(-1) ?? null;
   const visibleAudio =
     pendingNarrationIds.size &&
@@ -444,7 +447,7 @@ function TableView({
           <>
             <NarrationFeed
               narrations={visibleNarrations}
-              rolls={state.dice_rolls}
+              rolls={visibleRolls}
               events={state.events}
               characterNames={characterNames}
             />
