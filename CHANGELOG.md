@@ -9,11 +9,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
-- Frei formulierte Handlungen wuerfeln jetzt auf ein von der KI passend
-  gewaehltes Attribut (Staerke, Geschicklichkeit, Intelligenz oder
-  Charisma) statt immer auf Intelligenz. Scheitert die Einschaetzung,
-  gilt wie bisher Intelligenz — eine einzelne fehlgeschlagene
-  Klassifikation blockiert die Handlung nicht.
+- Keine vorgefertigten Handlungsvorschlaege mehr in der Handlungsleiste:
+  nur noch „Nichts tun" und ein Freitextfeld. Statt eines „Los"-Knopfes
+  werden alle Attribute des Charakters gelistet (die vier Grundattribute
+  sowie alle selbst benannten Faehigkeiten) — wer handelt, entscheidet
+  selbst, worauf die Probe gewuerfelt wird. Die KI bewertet danach nur
+  noch, ob diese Wahl inhaltlich zur Handlung passt: bei loser Passung
+  wird die Probe schwerer, bei offensichtlich falscher Wahl misslingt die
+  Handlung ohne Wurf. Scheitert die Einschaetzung, gilt die Wahl als
+  passend — eine einzelne fehlgeschlagene Pruefung blockiert die Handlung
+  nicht. Inventar-Gegenstaende lassen sich weiterhin per Klick markieren,
+  ohne die Handlung damit sofort abzusenden.
+- Charaktererstellung: nach dem Anlegen (nicht beim Zufallspfad) fragt ein
+  zusaetzlicher Schritt nach frei benannten Zusatzfaehigkeiten (z. B.
+  „Schloesser knacken"), auf die insgesamt 100 Punkte verteilt werden
+  koennen. Sie stehen danach in der Handlungsleiste gleichberechtigt neben
+  den vier Grundattributen zur Wahl.
 - Wuerfel-Popup: nach einer Probe erscheint eine kurze Rollanimation mit
   dem Ergebnis (Erfolg, kritischer Erfolg, Patzer usw.), bevor die schon
   im Hintergrund fertiggestellte Erzaehlung samt Sprachausgabe sichtbar

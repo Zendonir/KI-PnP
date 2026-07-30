@@ -83,6 +83,28 @@ export interface Character {
   inventory: InventoryEntry[];
 }
 
+/** Feste Ressourcen-Pools -- keine waehlbaren Wuerfel-Attribute, auch wenn
+ * sie technisch als Stat existieren (siehe app.domain.rules.RESOURCE_POOL_KEYS). */
+export const RESOURCE_POOL_KEYS = new Set(["hp", "mana", "stamina"]);
+
+/** Ressourcen-Pools plus die vier Grundattribute -- Namen, die beim
+ * Verteilen frei benannter Skills nicht verwendet werden duerfen (siehe
+ * app.services.character_service._RESERVED_STAT_KEYS). */
+export const RESERVED_STAT_KEYS = new Set([
+  ...RESOURCE_POOL_KEYS,
+  "strength",
+  "dexterity",
+  "intelligence",
+  "charisma",
+]);
+
+export const CORE_STAT_LABELS: Record<string, string> = {
+  strength: "Stärke",
+  dexterity: "Geschicklichkeit",
+  intelligence: "Intelligenz",
+  charisma: "Charisma",
+};
+
 export interface Suggestion {
   kind: string;
   label: string;

@@ -24,6 +24,7 @@ from app.db.models import Character, SceneSummary
 from app.schemas.api import (
     CharacterCreateRequest,
     CharacterOut,
+    CharacterSkillsUpdateRequest,
     GameCreateRequest,
     GameOut,
     GameStateOut,
@@ -118,6 +119,27 @@ async def create_character(
 ) -> CharacterOut:
     """Erstellt den Charakter des aufrufenden Spielers."""
     character = await characters.create(principal.game, principal.player, request)
+    await session.commit()
+    return await character_to_out(session, character)
+
+
+@router.put("/{game_id}/characters/me/skills", response_model=CharacterOut)
+async def set_character_skills(
+    request: CharacterSkillsUpdateRequest,
+    principal: PrincipalDep,
+    games: GameServiceDep,
+    characters: CharacterServiceDep,
+    session: SessionDep,
+) -> CharacterOut:
+    """Setzt die frei benannten Zusatzfaehigkeiten des eigenen Charakters.
+
+    Ersetzt die komplette bisherige Liste; die vier Grundattribute und die
+    Ressourcen-Pools bleiben unberuehrt.
+    """
+    character = await games.character_of(principal.player)
+    if character is None:
+        raise NotFoundError("Du hast noch keinen Charakter in dieser Runde.")
+    character = await characters.set_skills(character, request.skills)
     await session.commit()
     return await character_to_out(session, character)
 

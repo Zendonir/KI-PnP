@@ -34,6 +34,10 @@ ACTION_KINDS: tuple[str, ...] = (
 # Die vier Grundattribute, gegen die gewuerfelt werden kann.
 KNOWN_STATS: tuple[str, ...] = ("strength", "dexterity", "intelligence", "charisma")
 
+# Ressourcen-Pools sind keine waehlbaren Wuerfel-Attribute, auch wenn sie
+# technisch als CharacterStat existieren.
+RESOURCE_POOL_KEYS: frozenset[str] = frozenset({"hp", "mana", "stamina"})
+
 DIFFICULTY_TARGETS: dict[str, int] = {
     "story": 8,
     "easy": 10,
@@ -82,9 +86,9 @@ class ActionRequest:
     target_ref: str | None = None
     payload: dict[str, object] = field(default_factory=dict)
     stat_hint: str | None = None
-    """Von der KI vorgeschlagenes Attribut fuer eine frei formulierte
-    Handlung (kind == "custom"). Ungueltige oder fehlende Werte fallen auf
-    die feste Zuordnung nach Handlungsart zurueck."""
+    """Vom Spieler selbst gewaehltes Attribut oder frei benannter Skill,
+    gegen den die Handlung gewuerfelt wird. Ungueltige oder fehlende Werte
+    fallen auf die feste Zuordnung nach Handlungsart zurueck."""
 
 
 @dataclass(slots=True)
@@ -128,8 +132,21 @@ class RuleSet(Protocol):
 
 
 def ability_modifier(value: int) -> int:
-    """Klassischer Attributsmodifikator."""
+    """Klassischer Attributsmodifikator fuer die vier Grundattribute."""
     return (value - 10) // 2
+
+
+def skill_modifier(value: int) -> int:
+    """Bonus aus einem frei benannten, selbst gewaehlten Skill.
+
+    Skill-Punkte stammen aus einem gemeinsamen Budget von 100 Punkten, das
+    beim Erstellen auf beliebig viele selbst benannte Skills verteilt wird
+    (siehe CharacterService.set_skills) -- eine andere Skala als die
+    klassischen Attributswerte (typischerweise 8-20), daher ein eigener,
+    grober Umrechner statt ability_modifier. Gedeckelt, damit ein einzelner
+    Skill mit dem vollen Budget eine Probe nicht automatisch gewinnt.
+    """
+    return min(8, value // 10)
 
 
 class ClassicRuleSet:
@@ -245,7 +262,9 @@ class ClassicRuleSet:
 
         stat_key = (
             request.stat_hint
-            if request.stat_hint in KNOWN_STATS
+            if request.stat_hint
+            and request.stat_hint in actor.stats
+            and request.stat_hint not in RESOURCE_POOL_KEYS
             else self._STAT_FOR_KIND.get(kind, "intelligence")
         )
         target = DIFFICULTY_TARGETS.get(difficulty, DIFFICULTY_TARGETS["normal"])
@@ -254,7 +273,11 @@ class ClassicRuleSet:
         elif complexity == "narrative":
             target -= 1
 
-        bonus = ability_modifier(actor.stat(stat_key)) + (actor.level - 1) // 2
+        raw_value = actor.stat(stat_key)
+        modifier = (
+            ability_modifier(raw_value) if stat_key in KNOWN_STATS else skill_modifier(raw_value)
+        )
+        bonus = modifier + (actor.level - 1) // 2
         check = CheckSpec(
             stat=stat_key,
             notation="1d20",

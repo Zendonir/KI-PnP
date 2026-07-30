@@ -23,8 +23,8 @@ from app.db.models import (
     Item,
     Player,
 )
-from app.domain.rules import get_ruleset
-from app.schemas.api import CharacterCreateRequest
+from app.domain.rules import KNOWN_STATS, RESOURCE_POOL_KEYS, get_ruleset
+from app.schemas.api import CharacterCreateRequest, SkillAllocation
 from app.services import events as ev
 from app.services.context import ContextBuilder
 from app.services.events import EventRecorder
@@ -32,6 +32,10 @@ from app.services.events import EventRecorder
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ITEMS = ("Reiseproviant", "Fackel", "Wasserschlauch")
+
+_RESERVED_STAT_KEYS = frozenset({*RESOURCE_POOL_KEYS, *KNOWN_STATS})
+"""Namen, die durch feste Werte belegt sind und nicht als Skill-Name
+verwendet werden duerfen (hp/mana/stamina sowie die vier Grundattribute)."""
 
 
 class CharacterService:
@@ -114,6 +118,47 @@ class CharacterService:
             actor_type="player",
             actor_id=player.id,
         )
+        return character
+
+    async def set_skills(
+        self, character: Character, skills: list[SkillAllocation]
+    ) -> Character:
+        """Ersetzt die frei benannten Zusatzfaehigkeiten eines Charakters.
+
+        Die vier Grundattribute und die Ressourcen-Pools (hp/mana/stamina)
+        bleiben unangetastet -- nur die selbst benannten Skills werden
+        komplett durch die neue Liste ersetzt. Die Summe wurde bereits vom
+        Schema geprueft (<= 100); hier folgen nur die Namensregeln, die den
+        Charakter selbst betreffen.
+        """
+        seen: set[str] = set()
+        for entry in skills:
+            key = entry.name.strip().casefold()
+            if not key:
+                raise ValidationError("Faehigkeiten brauchen einen Namen.")
+            if key in _RESERVED_STAT_KEYS:
+                raise ValidationError(
+                    f"'{entry.name.strip()}' ist ein fester Wert und kann nicht "
+                    "als Faehigkeit angelegt werden."
+                )
+            if key in seen:
+                raise ValidationError(f"'{entry.name.strip()}' ist doppelt vergeben.")
+            seen.add(key)
+
+        for stat in list(character.stats):
+            if stat.key.strip().casefold() not in _RESERVED_STAT_KEYS:
+                await self._session.delete(stat)
+        for entry in skills:
+            self._session.add(
+                CharacterStat(
+                    character_id=character.id,
+                    key=entry.name.strip(),
+                    value=entry.points,
+                    max_value=None,
+                )
+            )
+        await self._session.flush()
+        await self._session.refresh(character)
         return character
 
     async def _resolve_draft(

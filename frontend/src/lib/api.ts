@@ -96,13 +96,30 @@ export const api = {
     },
   ) => request<Character>(`/games/${gameId}/characters`, { method: "POST", body: payload, token }),
 
+  setCharacterSkills: (
+    gameId: string,
+    token: string,
+    skills: { name: string; points: number }[],
+  ) =>
+    request<Character>(`/games/${gameId}/characters/me/skills`, {
+      method: "PUT",
+      body: { skills },
+      token,
+    }),
+
   startGame: (gameId: string, token: string) =>
     request<GameState>(`/games/${gameId}/start`, { method: "POST", token }),
 
   submitAction: (
     gameId: string,
     token: string,
-    payload: { kind: string; text: string; target_ref?: string; payload?: Record<string, unknown> },
+    payload: {
+      kind: string;
+      text: string;
+      target_ref?: string;
+      payload?: Record<string, unknown>;
+      stat?: string;
+    },
   ) => request<unknown>(`/games/${gameId}/actions`, { method: "POST", body: payload, token }),
 
   resolveTurn: (gameId: string, token: string, turnId?: string) =>

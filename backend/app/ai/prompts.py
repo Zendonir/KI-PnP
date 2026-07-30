@@ -72,25 +72,33 @@ Vorschlaege mit unbekannten Namen werden verworfen.
 
 _SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, wait, custom"
 
-STAT_PROMPT_SYSTEM = """\
-Du bist ein Regel-Assistent fuer ein Pen-&-Paper-Rollenspiel. Deine einzige
-Aufgabe: entscheiden, welches Attribut fuer eine frei formulierte Handlung
-gewuerfelt wird.
+STAT_FIT_SYSTEM = """\
+Du bist ein Regel-Assistent fuer ein Pen-&-Paper-Rollenspiel. Ein Spieler hat
+eine frei formulierte Handlung eingegeben und selbst entschieden, gegen
+welches Attribut oder welchen selbst benannten Skill sie gewuerfelt wird.
+Deine einzige Aufgabe: beurteilen, ob diese Wahl inhaltlich zur Handlung
+passt -- du entscheidest nicht, was gewuerfelt wird, nur wie plausibel die
+Wahl ist.
 
-Attribute:
-- strength: koerperliche Kraft, Nahkampf, etwas Schweres bewegen oder einschuechtern
-- dexterity: Beweglichkeit, Heimlichkeit, Fernkampf, Reflexe, Feinmotorik
-- intelligence: Wissen, Analyse, Magie, Taktik, Erinnerung
-- charisma: Ueberzeugungskraft, Anfuehren, soziales Geschick, Auftreten
+Maszstaebe:
+- "good": das Attribut/der Skill passt nachvollziehbar zur Handlung.
+- "poor": es besteht ein loser Zusammenhang, aber die Wahl ist nicht die
+  naheliegendste -- die Probe wird dadurch schwerer, aber bleibt moeglich.
+- "auto_fail": das Attribut/der Skill hat erkennbar nichts mit der Handlung
+  zu tun -- die Handlung misslingt ohne Wurf.
 
 Antworte ausschliesslich mit einem einzigen JSON-Objekt, ohne erklaerenden
-Text davor oder danach: {"stat": "strength|dexterity|intelligence|charisma"}
+Text davor oder danach: {"fit": "good|poor|auto_fail"}
 """
 
 
-def build_stat_prompt(text: str) -> str:
-    """Auftrag: passendes Attribut fuer eine frei formulierte Handlung waehlen."""
-    return f'Handlung: "{text.strip()}"\n\nWelches Attribut passt am besten?'
+def build_stat_fit_prompt(text: str, stat: str) -> str:
+    """Auftrag: Passung von Handlung und selbst gewaehltem Attribut beurteilen."""
+    return (
+        f'Handlung: "{text.strip()}"\n'
+        f'Gewaehltes Attribut/Skill: "{stat.strip()}"\n\n'
+        "Wie gut passt das gewaehlte Attribut zu dieser Handlung?"
+    )
 
 
 def system_prompt(language: str = "de") -> str:

@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Genre = Literal["fantasy", "scifi", "horror", "mystery", "cyberpunk", "postapocalyptic", "western"]
 Difficulty = Literal["story", "easy", "normal", "hard", "deadly"]
@@ -144,6 +144,26 @@ class CharacterCreateRequest(Schema):
     randomize: bool = False
 
 
+class SkillAllocation(Schema):
+    name: str = Field(min_length=1, max_length=60)
+    points: int = Field(ge=0, le=100)
+
+
+class CharacterSkillsUpdateRequest(Schema):
+    """Frei benannte Zusatzfaehigkeiten, die neben den vier Grundattributen
+    als Wuerfel-Attribut waehlbar sind. Ersetzt bei jedem Aufruf die
+    komplette bisherige Liste (kein Zusammenfuehren)."""
+
+    skills: list[SkillAllocation] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def _check_budget(self) -> CharacterSkillsUpdateRequest:
+        total = sum(entry.points for entry in self.skills)
+        if total > 100:
+            raise ValueError("Insgesamt duerfen nicht mehr als 100 Punkte vergeben werden.")
+        return self
+
+
 # --- Runden und Handlungen ---------------------------------------------
 
 
@@ -169,6 +189,9 @@ class ActionSubmitRequest(Schema):
     text: str = Field(min_length=1, max_length=1000)
     target_ref: str | None = Field(default=None, max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)
+    stat: str | None = Field(default=None, max_length=60)
+    """Vom Spieler selbst gewaehltes Attribut oder frei benannter Skill,
+    gegen den diese Handlung gewuerfelt werden soll."""
 
 
 class DiceRollOut(Schema):

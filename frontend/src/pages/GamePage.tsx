@@ -131,6 +131,8 @@ function LobbyView({
   const [background, setBackground] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [assigningSkills, setAssigningSkills] = useState(false);
+  const [skills, setSkills] = useState<{ name: string; points: number }[]>([]);
   const joinUrl = `${window.location.origin}/join/${state.game.code}`;
 
   const createCharacter = async (randomize: boolean) => {
@@ -142,12 +144,49 @@ function LobbyView({
           ? { randomize: true }
           : { name, class: charClass, race, background },
       );
-      await onChanged();
+      // Der Zufallspfad ist bewusst schnell und ueberspringt die
+      // Fähigkeiten-Verteilung; wer den Charakter selbst baut, bekommt
+      // direkt danach den Verteilungsschritt gezeigt.
+      if (randomize) {
+        await onChanged();
+      } else {
+        setSkills([]);
+        setAssigningSkills(true);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Charakter konnte nicht erstellt werden.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const skillPointsUsed = skills.reduce((sum, entry) => sum + (entry.points || 0), 0);
+  const skillPointsLeft = 100 - skillPointsUsed;
+
+  const finishSkills = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const cleaned = skills
+        .map((entry) => ({ name: entry.name.trim(), points: entry.points || 0 }))
+        .filter((entry) => entry.name);
+      if (cleaned.length > 0) {
+        await api.setCharacterSkills(state.game.id, token, cleaned);
+      }
+      setAssigningSkills(false);
+      await onChanged();
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Faehigkeiten konnten nicht gespeichert werden.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skipSkills = async () => {
+    setAssigningSkills(false);
+    await onChanged();
   };
 
   const start = async () => {
@@ -219,6 +258,72 @@ function LobbyView({
 
         {state.my_character ? (
           <CharacterSheet character={state.my_character} />
+        ) : assigningSkills ? (
+          <Card title="Fähigkeiten verteilen">
+            <p className="mb-3 text-sm text-parchment/65">
+              Erfinde eigene Fähigkeiten (z. B. „Schlösser knacken") und verteile insgesamt 100
+              Punkte darauf. Sie stehen dir spaeter zusaetzlich zu den vier Grundattributen als
+              Wuerfel-Attribut zur Wahl.
+            </p>
+            <div className="space-y-2">
+              {skills.map((entry, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <TextInput
+                    value={entry.name}
+                    onChange={(event) => {
+                      const next = [...skills];
+                      next[index] = { ...next[index], name: event.target.value };
+                      setSkills(next);
+                    }}
+                    placeholder="z. B. Schlösser knacken"
+                    className="flex-1"
+                  />
+                  <TextInput
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={entry.points}
+                    onChange={(event) => {
+                      const next = [...skills];
+                      next[index] = { ...next[index], points: Number(event.target.value) || 0 };
+                      setSkills(next);
+                    }}
+                    className="w-20"
+                  />
+                  <Button variant="ghost" onClick={() => setSkills(skills.filter((_, i) => i !== index))}>
+                    ✕
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              className="mt-2 w-full"
+              disabled={skills.length >= 12}
+              onClick={() => setSkills([...skills, { name: "", points: 0 }])}
+            >
+              + Fähigkeit hinzufügen
+            </Button>
+            <p
+              className={`mt-2 text-sm ${
+                skillPointsLeft < 0 ? "text-blood-400" : "text-parchment/60"
+              }`}
+            >
+              Verbleibend: {skillPointsLeft} von 100 Punkten
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                className="flex-1"
+                disabled={busy || skillPointsLeft < 0}
+                onClick={() => void finishSkills()}
+              >
+                Fertig
+              </Button>
+              <Button variant="ghost" disabled={busy} onClick={() => void skipSkills()}>
+                Überspringen
+              </Button>
+            </div>
+          </Card>
         ) : (
           <Card title="Charakter erstellen">
             <div className="space-y-3">
@@ -586,7 +691,6 @@ function TableView({
             {paused && <Badge tone="warn">pausiert</Badge>}
           </div>
           <ActionBar
-            turn={state.turn}
             character={state.my_character}
             hasSubmitted={hasSubmitted}
             disabled={busy || paused}

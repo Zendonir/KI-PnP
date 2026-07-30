@@ -1,14 +1,15 @@
 """Tests der drei neuen Zugmechaniken.
 
-Deckt ab: KI-gestuetzte Attributwahl fuer frei formulierte Handlungen, die
-Trennung von Wuerfelmechanik und Erzaehlung (Wuerfel-Popup mit /continue),
-und das seltene Quick-Time-Event (Vorteil durch rechtzeitige Hilfe).
+Deckt ab: die selbst gewaehlte Attributwahl fuer frei formulierte Handlungen
+und die KI-gestuetzte Passungspruefung dazu, die Trennung von
+Wuerfelmechanik und Erzaehlung (Wuerfel-Popup mit /continue), und das
+seltene Quick-Time-Event (Vorteil durch rechtzeitige Hilfe).
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,20 +34,20 @@ from .test_game_flow import _create_character, _create_game, _join, started_game
 __all__ = ["started_game"]  # re-exportiert fuer die Fixture-Aufloesung von pytest
 
 
-class FakeStatLLM:
-    """Liefert eine feste Attributwahl, delegiert alles andere an den Mock."""
+class FakeFitLLM:
+    """Liefert eine feste Passungsbewertung, delegiert alles andere an den Mock."""
 
     name = "mock"
 
-    def __init__(self, stat: str) -> None:
-        self._stat = stat
+    def __init__(self, fit: str) -> None:
+        self._fit = fit
         self._delegate = MockLLMProvider(seed=3)
-        self.stat_calls: list[str] = []
+        self.fit_calls: list[str] = []
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        if request.purpose == "stat_classify":
-            self.stat_calls.append(request.prompt)
-            return LLMResponse(text=json.dumps({"stat": self._stat}), model="fake")
+        if request.purpose == "stat_fit":
+            self.fit_calls.append(request.prompt)
+            return LLMResponse(text=json.dumps({"fit": self._fit}), model="fake")
         return await self._delegate.complete(request)
 
     async def aclose(self) -> None:
@@ -54,72 +55,69 @@ class FakeStatLLM:
 
 
 @pytest.fixture
-def stat_settings(tmp_path: Path) -> Settings:
-    return Settings(
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'stat.db'}",
-        ai_provider="mock",
-        jwt_secret="test-secret",
-        environment="test",
-        summary_every_n_events=1000,
-    )
+async def fit_client_factory(
+    tmp_path: Path,
+) -> AsyncIterator[Callable[[str], Any]]:
+    """Baut pro Aufruf einen eigenen Client mit einer festen KI-Passungsbewertung."""
+    clients: list[AsyncClient] = []
+    containers: list[Container] = []
+
+    async def factory(fit: str) -> tuple[AsyncClient, Container]:
+        settings = Settings(
+            database_url=f"sqlite+aiosqlite:///{tmp_path / f'fit-{fit}.db'}",
+            ai_provider="mock",
+            jwt_secret="test-secret",
+            environment="test",
+            summary_every_n_events=1000,
+        )
+        container = Container(
+            settings=settings,
+            database=Database(settings),
+            hub=EventHub(None),
+            llm=FakeFitLLM(fit),
+            tts=BrowserTTSProvider(),
+        )
+        async with container.database.engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        app = create_app(container.settings, container)
+        client = AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
+        clients.append(client)
+        containers.append(container)
+        return client, container
+
+    yield factory
+
+    for client in clients:
+        await client.aclose()
+    for container in containers:
+        await container.shutdown()
 
 
-@pytest.fixture
-async def stat_container(stat_settings: Settings) -> AsyncIterator[Container]:
-    instance = Container(
-        settings=stat_settings,
-        database=Database(stat_settings),
-        hub=EventHub(None),
-        llm=FakeStatLLM("strength"),
-        tts=BrowserTTSProvider(),
-    )
-    async with instance.database.engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-    yield instance
-    await instance.shutdown()
-
-
-@pytest.fixture
-async def stat_client(stat_container: Container) -> AsyncIterator[AsyncClient]:
-    app = create_app(stat_container.settings, stat_container)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://testserver"
-    ) as client:
-        yield client
-
-
-class TestAttributKlassifikation:
-    async def test_custom_action_uses_ai_chosen_stat(
-        self, stat_client: AsyncClient, stat_container: Container
-    ) -> None:
-        """Eine frei formulierte Handlung ("Angreifen") soll auf das von der
-        KI vorgeschlagene Attribut wuerfeln (hier: Staerke), nicht mehr immer
-        auf Intelligenz."""
-        session = await _create_game(stat_client)
+class TestAttributWahl:
+    async def test_player_chosen_stat_is_used_for_the_roll(self, client: AsyncClient) -> None:
+        """Der Spieler waehlt das Attribut selbst -- die Probe muss darauf
+        wuerfeln, nicht mehr immer auf Intelligenz."""
+        session = await _create_game(client)
         game_id = session["game"]["id"]
-        await _create_character(stat_client, game_id, session["token"], "Kell", "Krieger")
-        await stat_client.post(f"/api/v1/games/{game_id}/start", headers=auth(session["token"]))
+        await _create_character(client, game_id, session["token"], "Kell", "Krieger")
+        await client.post(f"/api/v1/games/{game_id}/start", headers=auth(session["token"]))
 
-        response = await stat_client.post(
+        response = await client.post(
             f"/api/v1/games/{game_id}/actions",
-            json={"kind": "custom", "text": "Ich greife an."},
+            json={"kind": "custom", "text": "Ich greife an.", "stat": "strength"},
             headers=auth(session["token"]),
         )
         assert response.status_code == 201, response.text
 
         state = (
-            await stat_client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
         ).json()
         # Krieger: Staerke 14 (Bonus +2), Intelligenz bleibt bei 10 (Bonus 0).
         assert state["dice_rolls"][0]["modifier"] == 2, "Muss auf Staerke gewuerfelt haben"
-        # Beweist, dass die Klassifikation tatsaechlich aufgerufen wurde.
-        assert stat_container.llm.stat_calls  # type: ignore[attr-defined]
 
-    async def test_classification_failure_falls_back_to_intelligence(
-        self, client: AsyncClient
-    ) -> None:
-        """Der normale Mock-Spielleiter kennt "stat_classify" nicht und liefert
-        kein "stat"-Feld -- das darf die Handlung nicht blockieren."""
+    async def test_missing_stat_falls_back_to_kind_mapping(self, client: AsyncClient) -> None:
+        """Ohne vom Spieler gewaehltes Attribut bleibt die feste
+        Kind-Zuordnung bestehen ("custom" -> Intelligenz)."""
         session = await _create_game(client)
         game_id = session["game"]["id"]
         await _create_character(client, game_id, session["token"], "Kell", "Krieger")
@@ -134,8 +132,82 @@ class TestAttributKlassifikation:
         state = (
             await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
         ).json()
-        # Intelligenz bleibt bei 10 -> Bonus 0, wie vor dieser Funktion.
         assert state["dice_rolls"][0]["modifier"] == 0
+
+
+class TestAttributPassung:
+    async def test_poor_fit_makes_the_check_harder(
+        self, fit_client_factory: Callable[[str], Any]
+    ) -> None:
+        client, container = await fit_client_factory("poor")
+        session = await _create_game(client)
+        game_id = session["game"]["id"]
+        await _create_character(client, game_id, session["token"], "Kell", "Krieger")
+        await client.post(f"/api/v1/games/{game_id}/start", headers=auth(session["token"]))
+
+        response = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={
+                "kind": "custom",
+                "text": "Ich versuche, das Schloss zu knacken.",
+                "stat": "charisma",
+            },
+            headers=auth(session["token"]),
+        )
+        assert response.status_code == 201, response.text
+
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
+        ).json()
+        assert state["dice_rolls"][0]["difficulty"] == 16, "normal (12) + Erschwernis (4)"
+        assert container.llm.fit_calls  # type: ignore[attr-defined]
+
+    async def test_auto_fail_skips_the_roll(
+        self, fit_client_factory: Callable[[str], Any]
+    ) -> None:
+        client, _container = await fit_client_factory("auto_fail")
+        session = await _create_game(client)
+        game_id = session["game"]["id"]
+        await _create_character(client, game_id, session["token"], "Kell", "Krieger")
+        await client.post(f"/api/v1/games/{game_id}/start", headers=auth(session["token"]))
+
+        response = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={
+                "kind": "custom",
+                "text": "Ich versuche zu fliegen.",
+                "stat": "charisma",
+            },
+            headers=auth(session["token"]),
+        )
+        assert response.status_code == 201, response.text
+
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
+        ).json()
+        assert state["dice_rolls"] == [], "Bei auto_fail darf gar nicht gewuerfelt werden"
+        resolved = [e for e in state["events"] if e["type"] == "action.resolved"]
+        assert resolved and resolved[0]["payload"]["degree"] == "failure"
+
+    async def test_missing_fit_response_defaults_to_good(self, client: AsyncClient) -> None:
+        """Der normale Mock-Spielleiter kennt "stat_fit" nicht und liefert
+        kein "fit"-Feld -- das muss als passend gelten, darf die Handlung
+        also nicht blockieren oder erschweren."""
+        session = await _create_game(client)
+        game_id = session["game"]["id"]
+        await _create_character(client, game_id, session["token"], "Kell", "Krieger")
+        await client.post(f"/api/v1/games/{game_id}/start", headers=auth(session["token"]))
+
+        response = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "custom", "text": "Ich greife an.", "stat": "strength"},
+            headers=auth(session["token"]),
+        )
+        assert response.status_code == 201, response.text
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
+        ).json()
+        assert state["dice_rolls"][0]["difficulty"] == 12, "keine Erschwernis ohne fit-Antwort"
 
 
 class TestQuickTimeEvent:

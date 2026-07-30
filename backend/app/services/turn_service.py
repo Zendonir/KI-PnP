@@ -21,6 +21,7 @@ import asyncio
 import logging
 import random
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import pydantic
@@ -45,7 +46,7 @@ from app.db.models import (
     Turn,
 )
 from app.domain import dice
-from app.domain.rules import ACTION_KINDS, ActionRequest, get_ruleset
+from app.domain.rules import ActionRequest, get_ruleset
 from app.realtime.hub import EventHub
 from app.schemas.api import ActionSubmitRequest
 from app.services import events as ev
@@ -59,11 +60,21 @@ from app.tts.providers import SpeechRequest, TTSProvider
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_STATS = frozenset({"strength", "dexterity", "intelligence", "charisma"})
-
 _INTERVENTION_CHANCE = 0.10
 """Anteil der Zugaufloesungen, bei denen ein Mitspieler kurz eingreifen darf --
 selten genug, um zu ueberraschen (siehe _maybe_offer_intervention)."""
+
+_POOR_FIT_DIFFICULTY_DELTA = 4
+"""Zusaetzliche Schwierigkeit, wenn das selbst gewaehlte Attribut nur locker
+zur Handlung passt (siehe _judge_stat_fit)."""
+
+
+@dataclass(frozen=True, slots=True)
+class _StatFit:
+    """Ergebnis der KI-Passungspruefung fuer ein selbst gewaehltes Attribut."""
+
+    difficulty_delta: int = 0
+    auto_fail: bool = False
 
 _INTERVENTION_TIMEOUT_SECONDS = 8.0
 
@@ -336,7 +347,10 @@ class TurnService:
         action.kind = request.kind
         action.text = request.text
         action.target_ref = request.target_ref
-        action.payload = dict(request.payload)
+        payload = dict(request.payload)
+        if request.stat:
+            payload["stat"] = request.stat
+        action.payload = payload
         action.status = "pending"
         await self._session.flush()
 
@@ -413,19 +427,20 @@ class TurnService:
         )
         pending_actions = list((await self._session.execute(pending_stmt)).scalars().all())
 
-        # Frei formulierte Handlungen bekommen ihr Attribut von einer
-        # kleinen KI-Einschaetzung statt der starren Kind-Zuordnung -- vor
-        # dem Sperren der Spielzeile, damit die Anfragen nicht seriell unter
-        # Lock warten.
-        custom_actions = [
-            a for a in pending_actions if a.kind == "custom" or a.kind not in ACTION_KINDS
-        ]
-        stat_hints: dict[uuid.UUID, str] = {}
-        if custom_actions:
-            classified = await asyncio.gather(
-                *(self._classify_custom_stat(a.text) for a in custom_actions)
+        # Das Attribut waehlt jetzt der Spieler selbst (payload["stat"]).
+        # Die KI wird nur noch gefragt, ob diese Wahl zur Handlung passt --
+        # vor dem Sperren der Spielzeile, damit die Anfragen nicht seriell
+        # unter Lock warten.
+        stat_actions = [a for a in pending_actions if str((a.payload or {}).get("stat") or "")]
+        stat_fits: dict[uuid.UUID, _StatFit] = {}
+        if stat_actions:
+            judged = await asyncio.gather(
+                *(
+                    self._judge_stat_fit(a.text, str((a.payload or {}).get("stat") or ""))
+                    for a in stat_actions
+                )
             )
-            stat_hints = dict(zip((a.id for a in custom_actions), classified, strict=True))
+            stat_fits = dict(zip((a.id for a in stat_actions), judged, strict=True))
 
         # Seltenes Quick-Time-Event: bevor die Wuerfe fallen, darf ein
         # zufaelliger Mitspieler kurz eingreifen. Bewusst ausserhalb des
@@ -460,12 +475,13 @@ class TurnService:
                 continue
 
             actor = await character_to_domain(self._session, character)
+            action_payload = dict(action.payload or {})
             request = ActionRequest(
                 kind=action.kind,
                 text=action.text,
                 target_ref=action.target_ref,
-                payload=dict(action.payload or {}),
-                stat_hint=stat_hints.get(action.id),
+                payload=action_payload,
+                stat_hint=str(action_payload.get("stat") or "") or None,
             )
             plan = ruleset.plan(
                 request, actor, difficulty=difficulty, complexity=complexity
@@ -496,8 +512,13 @@ class TurnService:
 
             await applier.apply(plan.costs, source="rules")
 
+            fit = stat_fits.get(action.id)
+            auto_fail = bool(fit and fit.auto_fail and plan.check is not None)
+
             roll = None
-            if plan.check is not None:
+            if plan.check is not None and not auto_fail:
+                if fit and fit.difficulty_delta:
+                    plan.check.difficulty += fit.difficulty_delta
                 roll = dice.roll(
                     plan.check.notation,
                     difficulty=plan.check.difficulty,
@@ -554,14 +575,25 @@ class TurnService:
                 ruleset.outcome_effects(request, actor, roll), source="rules"
             )
 
-            outcome = {
-                "allowed": True,
-                "success": roll.success if roll else None,
-                "degree": roll.degree if roll else "",
-                "total": roll.total if roll else None,
-                "difficulty": roll.difficulty if roll else None,
-                "helped_by": helper_name if action.id == advantage_action_id else None,
-            }
+            if auto_fail:
+                outcome = {
+                    "allowed": True,
+                    "success": False,
+                    "degree": "failure",
+                    "total": None,
+                    "difficulty": None,
+                    "helped_by": None,
+                    "reason": "Das gewaehlte Attribut passt nicht zur Handlung.",
+                }
+            else:
+                outcome = {
+                    "allowed": True,
+                    "success": roll.success if roll else None,
+                    "degree": roll.degree if roll else "",
+                    "total": roll.total if roll else None,
+                    "difficulty": roll.difficulty if roll else None,
+                    "helped_by": helper_name if action.id == advantage_action_id else None,
+                }
             action.status = "resolved"
             action.outcome = outcome
             await self._recorder.record(
@@ -587,29 +619,36 @@ class TurnService:
         await self._recorder.flush_to_clients(game.id)
         return results
 
-    async def _classify_custom_stat(self, text: str) -> str:
-        """Waehlt per KI ein passendes Attribut fuer eine frei formulierte Handlung.
+    async def _judge_stat_fit(self, text: str, stat: str) -> _StatFit:
+        """Laesst die KI beurteilen, ob das selbst gewaehlte Attribut passt.
 
-        Scheitert die Einschaetzung -- KI nicht erreichbar, unerwartete
-        Antwort, was auch immer --, gilt wie zuvor "intelligence". Eine
-        einzelne fehlgeschlagene Klassifikation darf die Handlung nicht
+        Der Spieler waehlt das Attribut selbst; die KI entscheidet nichts
+        mechanisch, sondern schlaegt nur eine Erschwernis oder einen
+        erzwungenen Fehlschlag vor, wenn die Wahl offensichtlich nicht zur
+        Handlung passt. Scheitert die Einschaetzung -- KI nicht erreichbar,
+        unerwartete Antwort, was auch immer --, gilt die Wahl als passend.
+        Eine einzelne fehlgeschlagene Einschaetzung darf die Handlung nicht
         blockieren, deshalb wird hier bewusst breit abgefangen.
         """
         try:
             request = LLMRequest(
-                system=prompts.STAT_PROMPT_SYSTEM,
-                prompt=prompts.build_stat_prompt(text),
+                system=prompts.STAT_FIT_SYSTEM,
+                prompt=prompts.build_stat_fit_prompt(text, stat),
                 max_tokens=60,
-                purpose="stat_classify",
+                purpose="stat_fit",
             )
             response = await self._llm.complete(request)
-            stat = str(extract_json(response.text).get("stat", "")).strip().lower()
-            return stat if stat in _KNOWN_STATS else "intelligence"
+            fit = str(extract_json(response.text).get("fit", "")).strip().lower()
         except Exception:
             logger.warning(
-                "Attribut-Einschaetzung fehlgeschlagen, nutze intelligence.", exc_info=True
+                "Attribut-Passungspruefung fehlgeschlagen, werte als passend.", exc_info=True
             )
-            return "intelligence"
+            return _StatFit()
+        if fit == "auto_fail":
+            return _StatFit(auto_fail=True)
+        if fit == "poor":
+            return _StatFit(difficulty_delta=_POOR_FIT_DIFFICULTY_DELTA)
+        return _StatFit()
 
     async def _maybe_offer_intervention(
         self, game: Game, turn: Turn, pending_actions: list[Action]
