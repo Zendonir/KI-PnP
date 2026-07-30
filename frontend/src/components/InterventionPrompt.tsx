@@ -4,6 +4,11 @@
  * -- daher bewusst als ploetzlich auftauchendes Banner statt als weiterer
  * Dialog, der den Bildschirm blockiert. Reagiert niemand rechtzeitig, laeuft
  * das Zeitfenster serverseitig ohnehin ab; hier wird nur mitgezaehlt.
+ *
+ * "Nichts unternehmen" ist bewusst ein eigener, fest oben mittig
+ * verankerter Knopf -- unabhaengig von der Karte darunter, sodass sich das
+ * Angebot immer an derselben Stelle wegtippen laesst, ohne erst die Karte
+ * lesen zu muessen.
  */
 
 import { useEffect, useState } from "react";
@@ -57,25 +62,38 @@ export function InterventionPrompt({
   const ratio = Math.max(0, Math.min(1, remaining / offer.timeout_seconds));
 
   return (
-    <div className="animate-pop-in fixed inset-x-4 top-20 z-40 mx-auto max-w-sm rounded-2xl border border-ember-500/60 bg-ink-900 p-4 shadow-2xl">
-      <p className="text-sm font-bold text-ember-400">Jetzt eingreifen?</p>
-      <p className="mt-1 text-sm text-parchment/80">
-        {offer.actor} k&ouml;nnte Hilfe gebrauchen bei: &bdquo;{offer.action_text}&ldquo;
-      </p>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-ink-700">
-        <div
-          className="h-full rounded-full bg-ember-500 transition-[width] duration-100 ease-linear"
-          style={{ width: `${ratio * 100}%` }}
-        />
-      </div>
-      <div className="mt-3 flex gap-2">
-        <Button className="flex-1" disabled={busy} onClick={() => void respond(true)}>
+    <>
+      {/* Immer an derselben Stelle -- oben mittig, fest -- unabhaengig vom
+          Text der Karte darunter. */}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void respond(false)}
+        className="fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-full border border-ink-600
+          bg-ink-900/95 px-4 py-1.5 text-xs font-semibold text-parchment/70 shadow-lg backdrop-blur
+          transition-colors hover:text-parchment disabled:opacity-50"
+      >
+        Nichts unternehmen
+      </button>
+
+      <div
+        className="animate-pop-in fixed top-16 left-1/2 z-40 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2
+          rounded-2xl border border-ember-500/60 bg-ink-900 p-4 shadow-2xl"
+      >
+        <p className="text-sm font-bold text-ember-400">Jetzt eingreifen?</p>
+        <p className="mt-1 text-sm text-parchment/80">
+          {offer.actor} k&ouml;nnte Hilfe gebrauchen bei: &bdquo;{offer.action_text}&ldquo;
+        </p>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-ink-700">
+          <div
+            className="h-full rounded-full bg-ember-500 transition-[width] duration-100 ease-linear"
+            style={{ width: `${ratio * 100}%` }}
+          />
+        </div>
+        <Button className="mt-3 w-full" disabled={busy} onClick={() => void respond(true)}>
           Eingreifen!
         </Button>
-        <Button variant="ghost" disabled={busy} onClick={() => void respond(false)}>
-          Nichts tun
-        </Button>
       </div>
-    </div>
+    </>
   );
 }

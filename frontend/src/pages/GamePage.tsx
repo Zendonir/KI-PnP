@@ -20,7 +20,7 @@ import { NarrationFeed } from "../components/NarrationFeed";
 import { Badge, Button, Card, ErrorNote, Field, Spinner, TextInput } from "../components/ui";
 import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
-import type { GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
+import type { DiceRoll, GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
 import { useGameState } from "../lib/useGameState";
 
 type Tab = "story" | "character" | "quests" | "world" | "log";
@@ -312,7 +312,6 @@ function TableView({
   const hasSubmitted = Boolean(
     state.turn?.submitted_player_ids.includes(state.me.id),
   );
-  const latestNarration = state.narrations.at(-1) ?? null;
   const paused = state.game.status === "paused";
   const finished = state.game.status === "finished";
 
@@ -329,26 +328,51 @@ function TableView({
     }
   };
 
-  // Die Wuerfe des gerade wartenden Zuges (Phase A fertig, Erzaehlung noch
-  // nicht bestaetigt) -- der Rest von state.dice_rolls sind aeltere Wuerfe.
-  const resolvingRolls = useMemo(() => {
-    const turn = state.turn;
-    if (!turn || turn.status !== "resolving") return [];
-    return state.dice_rolls.filter((roll) => roll.turn_id === turn.id);
-  }, [state.turn, state.dice_rolls]);
-
-  // Ohne Wuerfe (z. B. eine uebersprungene Szene) gibt es nichts zu zeigen --
-  // dann direkt fortsetzen statt ein leeres Popup anzuzeigen.
-  const autoContinuedTurnRef = useRef<string | null>(null);
+  // Das Backend loest einen Zug vollstaendig auf, sobald alle eingereicht
+  // haben -- Erzaehlung und Sprachausgabe entstehen also schon im
+  // Hintergrund, waehrend hier noch das Wuerfel-Popup laeuft. Ein Wechsel
+  // der Zug-Kennung zeigt an, dass der zuvor gezeigte Zug gerade
+  // abgeschlossen wurde; dessen Wuerfe werden dann kurz zurueckgehalten und
+  // angezeigt, bevor "Weiter" die schon fertige Erzaehlung (und deren Ton)
+  // freigibt -- rein lokal, ohne weiteren Netzwerkaufruf.
+  const previousTurnIdRef = useRef<string | null>(null);
+  const [pendingReveal, setPendingReveal] = useState<
+    { turnId: string; rolls: DiceRoll[] } | null
+  >(null);
   useEffect(() => {
-    const turn = state.turn;
-    if (!turn || turn.status !== "resolving" || resolvingRolls.length > 0) return;
-    if (autoContinuedTurnRef.current === turn.id) return;
-    autoContinuedTurnRef.current = turn.id;
-    void run(() => api.continueTurn(state.game.id, token, turn.id));
-    // run/token/state.game.id sollen den Effekt nicht erneut ausloesen --
-    // nur eine Statusaenderung des Zuges selbst zaehlt.
-  }, [state.turn, resolvingRolls.length]);
+    const currentId = state.turn?.id ?? null;
+    const previousId = previousTurnIdRef.current;
+    if (previousId && currentId !== previousId) {
+      const rolls = state.dice_rolls.filter((roll) => roll.turn_id === previousId);
+      if (rolls.length > 0) {
+        setPendingReveal({ turnId: previousId, rolls });
+      }
+    }
+    previousTurnIdRef.current = currentId;
+    // state.dice_rolls absichtlich nicht in den Abhaengigkeiten: der
+    // Zug-Wechsel selbst ist das Ausloesekriterium, die Wuerfe werden aus
+    // demselben, zu diesem Zeitpunkt schon aktuellen state gelesen.
+  }, [state.turn?.id]);
+
+  const pendingNarrationIds = useMemo(() => {
+    if (!pendingReveal) return new Set<string>();
+    return new Set(
+      state.narrations
+        .filter((item) => item.turn_id === pendingReveal.turnId)
+        .map((item) => item.id),
+    );
+  }, [pendingReveal, state.narrations]);
+
+  const visibleNarrations = pendingNarrationIds.size
+    ? state.narrations.filter((item) => !pendingNarrationIds.has(item.id))
+    : state.narrations;
+  const visibleLatestNarration = visibleNarrations.at(-1) ?? null;
+  const visibleAudio =
+    pendingNarrationIds.size &&
+    state.audio?.narration_id &&
+    pendingNarrationIds.has(state.audio.narration_id)
+      ? null
+      : state.audio;
 
   // Quick-Time-Event: ein an mich persoenlich gerichtetes Angebot bleibt
   // sichtbar, bis es beantwortet ist oder die Zeit ablaeuft.
@@ -366,12 +390,11 @@ function TableView({
   // niemals den Erzaehlstrang -- auch nicht bei langen Vorschlagslisten.
   return (
     <div className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden">
-      {resolvingRolls.length > 0 && (
+      {pendingReveal && (
         <DiceRollModal
-          rolls={resolvingRolls}
+          rolls={pendingReveal.rolls}
           characterNames={characterNames}
-          busy={busy}
-          onContinue={() => void run(() => api.continueTurn(state.game.id, token, state.turn!.id))}
+          onDismiss={() => setPendingReveal(null)}
         />
       )}
 
@@ -406,8 +429,8 @@ function TableView({
               isHost={state.is_host}
               playback={state.game.settings.audio_playback ?? "host"}
               enabled={state.game.settings.tts_enabled}
-              audio={state.audio}
-              latest={latestNarration}
+              audio={visibleAudio}
+              latest={visibleLatestNarration}
               lastMessage={lastMessage}
             />
           </div>
@@ -420,7 +443,7 @@ function TableView({
         {tab === "story" && (
           <>
             <NarrationFeed
-              narrations={state.narrations}
+              narrations={visibleNarrations}
               rolls={state.dice_rolls}
               events={state.events}
               characterNames={characterNames}

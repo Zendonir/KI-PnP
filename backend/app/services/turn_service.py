@@ -390,31 +390,18 @@ class TurnService:
     # -- Aufloesung ------------------------------------------------------
 
     async def resolve_turn(self, game: Game, turn: Turn) -> Turn:
-        """Fuehrt beide Phasen aus und startet die naechste Runde.
-
-        Fuer Tests und interne Zwecke gedacht. Die normalen Aufloesungswege
-        (Einreichen der letzten Handlung, /resolve, /skip) rufen stattdessen
-        ``resolve_mechanics`` allein auf -- die Erzaehlung folgt erst, wenn
-        die Spieler das Wuerfelergebnis per /continue bestaetigt haben.
-        """
+        """Fuehrt beide Phasen aus und startet die naechste Runde."""
         if turn.status == "completed":
             raise ConflictError("Dieser Zug ist bereits abgeschlossen.")
 
         results = await self._resolve_mechanics(game, turn)
         return await self._narrate(game, turn, results)
 
-    async def resolve_mechanics(self, game: Game, turn: Turn) -> list[dict[str, Any]]:
-        """Oeffentlicher Zugang zu Phase A allein, ohne sofort zu erzaehlen."""
-        if turn.status == "completed":
-            raise ConflictError("Dieser Zug ist bereits abgeschlossen.")
-        return await self._resolve_mechanics(game, turn)
-
     async def renarrate(self, game: Game, turn: Turn) -> Turn:
         """Erzaehlt einen bereits mechanisch aufgeloesten Zug neu.
 
-        Dient sowohl der Spielleitungsfunktion "KI neu erzaehlen" als auch
-        dem normalen /continue nach dem Wuerfel-Popup -- in beiden Faellen
-        stehen Wuerfe und Kosten schon fest, nur der Erzaehltext entsteht neu.
+        Nuetzlich, wenn die KI ausgefallen ist oder das Ergebnis nicht
+        passt -- die bereits gewuerfelten Ergebnisse bleiben unveraendert.
         """
         results = await self._results_from_actions(turn)
         return await self._narrate(game, turn, results)

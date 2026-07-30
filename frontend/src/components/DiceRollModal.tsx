@@ -1,10 +1,11 @@
-/** Wuerfel-Popup: zeigt das Ergebnis der Mechanik-Phase mit einer kurzen
- * Rollanimation, bevor die Erzaehlung fortgesetzt wird.
+/** Wuerfel-Popup: zeigt das Ergebnis eines Zuges mit einer kurzen
+ * Rollanimation, bevor die schon fertige Erzaehlung (samt Sprachausgabe)
+ * sichtbar wird.
  *
- * Erscheint, sobald ein Zug "resolving" ist (die Wuerfel stehen fest, die KI
- * wurde aber noch nicht gefragt) und mindestens ein Wurf dazu vorliegt. Erst
- * ein Klick auf "Weiter" loest die Fortsetzung aus -- absichtlich: das
- * Ergebnis soll wirken, nicht einfach vorbeiscrollen.
+ * Die KI und die Sprachaufnahme entstehen bereits im Hintergrund, waehrend
+ * dieses Popup laeuft -- das Backend wartet nicht auf einen Klick. Erst
+ * "Weiter" blendet das schon fertige Ergebnis ein und gibt den Ton frei;
+ * das ist rein lokal, ohne weiteren Netzwerkaufruf.
  */
 
 import { useEffect, useState } from "react";
@@ -18,13 +19,11 @@ const REVEAL_DELAY_MS = 850;
 export function DiceRollModal({
   rolls,
   characterNames,
-  busy,
-  onContinue,
+  onDismiss,
 }: {
   rolls: DiceRoll[];
   characterNames: Record<string, string>;
-  busy: boolean;
-  onContinue: () => void;
+  onDismiss: () => void;
 }) {
   const [revealed, setRevealed] = useState(false);
 
@@ -78,8 +77,8 @@ export function DiceRollModal({
         })}
       </div>
 
-      <Button className="mt-5 w-full" disabled={!revealed || busy} onClick={onContinue}>
-        {busy ? "..." : "Weiter"}
+      <Button className="mt-5 w-full" disabled={!revealed} onClick={onDismiss}>
+        Weiter
       </Button>
     </Modal>
   );

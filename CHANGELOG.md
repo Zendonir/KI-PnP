@@ -9,6 +9,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- Frei formulierte Handlungen wuerfeln jetzt auf ein von der KI passend
+  gewaehltes Attribut (Staerke, Geschicklichkeit, Intelligenz oder
+  Charisma) statt immer auf Intelligenz. Scheitert die Einschaetzung,
+  gilt wie bisher Intelligenz — eine einzelne fehlgeschlagene
+  Klassifikation blockiert die Handlung nicht.
+- Wuerfel-Popup: nach einer Probe erscheint eine kurze Rollanimation mit
+  dem Ergebnis (Erfolg, kritischer Erfolg, Patzer usw.), bevor die schon
+  im Hintergrund fertiggestellte Erzaehlung samt Sprachausgabe sichtbar
+  wird beziehungsweise Ton abspielt. Die KI und die Vertonung laufen
+  bereits waehrend der Animation — ein Klick auf „Weiter" blendet nur das
+  bereits fertige Ergebnis ein, ohne weitere Wartezeit.
+- Seltenes Quick-Time-Event (rund 10 % der Zugaufloesungen): eine
+  zufaellig ausgewaehlte, an derselben Stelle anwesende Person bekommt ein
+  paar Sekunden lang die Moeglichkeit „einzugreifen" — nimmt sie rechtzeitig
+  an, wuerfelt die betroffene Handlung mit Vorteil (zwei Wuerfe, der
+  bessere zaehlt).
 - Fortlaufende Integration: Tests, statische Analyse, Typprüfung und Build
   laufen bei jedem Push und Pull Request; zusätzlich wird geprüft, ob
   Migration und Modelle auseinanderlaufen

@@ -188,6 +188,7 @@ class DiceRollOut(Schema):
 
 class NarrationOut(Schema):
     id: uuid.UUID
+    turn_id: uuid.UUID | None = None
     kind: str
     scene_title: str
     text: str

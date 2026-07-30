@@ -45,9 +45,11 @@ async def submit_action(
 
     Der Zug richtet sich nach dem Ort des eigenen Charakters -- bleibt die
     Gruppe zusammen, ist das fuer alle derselbe. Haben alle handlungsfaehigen
-    Spieler an diesem Ort eingereicht, loest das Backend dort automatisch nur
-    die mechanische Phase auf (Kosten, Wuerfe) -- die Erzaehlung folgt erst,
-    wenn die Spieler das Ergebnis per /continue bestaetigt haben.
+    Spieler an diesem Ort eingereicht, loest das Backend den Zug dort
+    automatisch auf, unabhaengig davon, was an anderen Orten passiert. Das
+    Wuerfelergebnis steht damit fest, bevor die KI ueberhaupt gefragt wird --
+    die Erzaehlung (und die Sprachausgabe dazu) entsteht direkt im Anschluss
+    im Hintergrund, waehrend das Frontend das Wuerfel-Popup zeigt.
     """
     turn = await games.current_turn_for_player(principal.game, principal.player)
     if turn is None:
@@ -62,7 +64,7 @@ async def submit_action(
     action = await turns.submit_action(principal.game, turn, principal.player, request)
 
     if await turns.turn_ready(principal.game, turn):
-        await turns.resolve_mechanics(principal.game, turn)
+        await turns.resolve_turn(principal.game, turn)
     return ActionOut.model_validate(action)
 
 
@@ -78,23 +80,23 @@ def _turn_out(turn: Turn) -> TurnOut:
 
 async def _resolve_target_turn(
     turn_id: uuid.UUID | None,
-    principal: Principal,
+    host: Principal,
     games: GameService,
     session: SessionDep,
 ) -> Turn:
     """Ermittelt den vom Aufruf gemeinten Zug.
 
     Mit turn_id: genau dieser Zug (muss zur Runde gehoeren). Ohne turn_id:
-    der Zug am Ort des Aufrufenden selbst -- ohne Aufteilung ist das ohnehin
-    der einzige, bestehende Aufrufe ohne den Parameter funktionieren also
-    unveraendert weiter.
+    der Zug am Ort der Spielleitung selbst -- ohne Aufteilung ist das
+    ohnehin der einzige, bestehende Aufrufe ohne den Parameter funktionieren
+    also unveraendert weiter.
     """
     if turn_id is not None:
         turn = await session.get(Turn, turn_id)
-        if turn is None or turn.game_id != principal.game.id:
+        if turn is None or turn.game_id != host.game.id:
             raise NotFoundError("Dieser Zug gehoert nicht zu dieser Runde.")
         return turn
-    turn = await games.current_turn_for_player(principal.game, principal.player)
+    turn = await games.current_turn_for_player(host.game, host.player)
     if turn is None:
         raise NotFoundError("Es laeuft derzeit kein Zug.")
     return turn
@@ -108,38 +110,15 @@ async def resolve_turn(
     session: SessionDep,
     turn_id: uuid.UUID | None = None,
 ) -> TurnOut:
-    """Loest die mechanische Phase eines laufenden Zuges sofort auf (Spielleiter-Funktion).
+    """Loest einen laufenden Zug sofort auf (Spielleiter-Funktion).
 
     Ohne turn_id den Zug am eigenen Ort; mit turn_id gezielt einen von
     mehreren gleichzeitig laufenden Zuegen -- die anderen bleiben unberuehrt.
-    Wie beim normalen Ablauf folgt die Erzaehlung erst nach /continue, damit
-    auch eine erzwungene Aufloesung das Wuerfel-Popup zeigt.
     """
     turn = await _resolve_target_turn(turn_id, host, games, session)
     if turn.status == "completed":
         raise ConflictError("Dieser Zug ist bereits abgeschlossen.")
-    await turns.resolve_mechanics(host.game, turn)
-    return _turn_out(turn)
-
-
-@router.post("/continue", response_model=TurnOut)
-async def continue_turn(
-    principal: PrincipalDep,
-    games: GameServiceDep,
-    turns: TurnServiceDep,
-    session: SessionDep,
-    turn_id: uuid.UUID | None = None,
-) -> TurnOut:
-    """Fuehrt Phase B (Erzaehlung) fort, nachdem die Wuerfel bestaetigt wurden.
-
-    Anders als /resolve und /renarrate nicht auf die Spielleitung
-    beschraenkt -- jeder an der Runde beteiligte Spieler darf das
-    Wuerfelergebnis bestaetigen und die Geschichte fortsetzen.
-    """
-    turn = await _resolve_target_turn(turn_id, principal, games, session)
-    if turn.status != "resolving":
-        raise ConflictError("Dieser Zug wartet nicht auf eine Fortsetzung.")
-    next_turn = await turns.renarrate(principal.game, turn)
+    next_turn = await turns.resolve_turn(host.game, turn)
     return _turn_out(next_turn)
 
 
@@ -169,14 +148,9 @@ async def skip_scene(
     session: SessionDep,
     turn_id: uuid.UUID | None = None,
 ) -> GameStateOut:
-    """Ueberspringt eine Szene: der Zug wird ohne Handlungen fortgeschrieben.
-
-    Ohne Handlungen faellt Phase A leer aus -- das Frontend erkennt das am
-    Fehlen von Wuerfen fuer diesen Zug und fuehrt /continue automatisch
-    fort, ohne ein leeres Popup zu zeigen.
-    """
+    """Ueberspringt eine Szene: der Zug wird ohne Handlungen fortgeschrieben."""
     turn = await _resolve_target_turn(turn_id, host, games, session)
-    await turns.resolve_mechanics(host.game, turn)
+    await turns.resolve_turn(host.game, turn)
     return await games.build_state(host.game, host.player)
 
 

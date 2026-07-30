@@ -114,6 +114,7 @@ export interface ActiveLocationTurn {
 
 export interface Narration {
   id: string;
+  turn_id: string | null;
   kind: "public" | "private";
   scene_title: string;
   text: string;
