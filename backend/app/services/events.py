@@ -61,6 +61,20 @@ async def increment_game_counter(
     return value
 
 
+async def reset_game_counter(
+    session: AsyncSession, game: Game, column: sa.orm.attributes.InstrumentedAttribute[int]
+) -> int:
+    """Setzt eine Zaehlspalte atomar auf 0 zurueck -- das Gegenstueck zu
+    increment_game_counter, aus demselben Grund per UPDATE...RETURNING statt
+    eines Python-seitigen Zuweisens (gleichzeitig aufloesende Orte)."""
+    result = await session.execute(
+        sa.update(Game).where(Game.id == game.id).values(**{column.key: 0}).returning(column)
+    )
+    value = result.scalar_one()
+    setattr(game, column.key, value)
+    return value
+
+
 @dataclass(slots=True)
 class RecordedEvent:
     """Ein geschriebenes Ereignis inklusive Sequenznummer."""

@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from app.ai.base import LLMRequest, LLMResponse
+from app.ai.prompts import STALL_ESCALATION_THRESHOLD
 
 _CONTEXT_BLOCK = re.compile(r"```json\s*(.*?)```", re.DOTALL)
 
@@ -29,6 +30,16 @@ _BEATS = [
     "Ein leises Klopfen antwortet, kaum hoerbar, aus der falschen Richtung.",
     "Der Weg gabelt sich, und beide Richtungen sehen falsch aus.",
 ]
+
+_PROGRESS_BEATS = [
+    "Endlich ein greifbarer Hinweis: Eine frische Spur fuehrt unmissverstaendlich weiter.",
+    "Ein Fehler des Gegners verschafft der Gruppe einen entscheidenden Moment.",
+    "Ein bisher verschlossener Weg steht ploetzlich offen.",
+    "Die Zeit draengt: Ein deutliches Zeichen zwingt zum Handeln, bevor es zu spaet ist.",
+]
+"""Wird statt eines vagen _BEATS-Satzes verwendet, sobald stall_streak den
+Schwellwert erreicht -- konkrete Wendung statt weiterer Atmosphaere, siehe
+prompts.build_turn_prompt fuer das Gegenstueck bei einem echten Sprachmodell."""
 
 _SUGGESTION_POOL: list[tuple[str, str, str]] = [
     ("investigate", "Die Umgebung untersuchen", "Vielleicht verraet ein Detail mehr."),
@@ -227,9 +238,24 @@ class MockLLMProvider:
         if not lines:
             lines.append("Die Gruppe zoegert, und die Szene haelt den Atem an.")
 
+        stall_streak = int(context.get("stall_streak") or 0)
+        if stall_streak >= STALL_ESCALATION_THRESHOLD:
+            beat = self._random.choice(_PROGRESS_BEATS)
+            changes.append(
+                {
+                    "op": "fact.assert",
+                    "key": f"progress.turn.{context.get('turn_number', 0)}",
+                    "statement": beat,
+                    "visibility": "public",
+                    "reason": "Eskalation nach mehreren erfolglosen Zuegen in Folge",
+                }
+            )
+        else:
+            beat = self._random.choice(_BEATS)
+
         return {
             "scene_title": str(context.get("scene_title") or "Fortsetzung"),
-            "narration": " ".join(lines) + " " + self._random.choice(_BEATS),
+            "narration": " ".join(lines) + " " + beat,
             "public_events": public_events,
             "private_messages": [],
             "suggestions": self._suggestions(context),

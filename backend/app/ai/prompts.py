@@ -72,6 +72,10 @@ Vorschlaege mit unbekannten Namen werden verworfen.
 
 _SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, wait, custom"
 
+STALL_ESCALATION_THRESHOLD = 2
+"""Ab so vielen erfolglosen Zuegen in Folge (games.stall_streak) muss die
+KI aktiv eine Wendung liefern statt weiter nur Atmosphaere zu beschreiben."""
+
 STAT_FIT_SYSTEM = """\
 Du bist ein Regel-Assistent fuer ein Pen-&-Paper-Rollenspiel. Ein Spieler hat
 eine frei formulierte Handlung eingegeben und selbst entschieden, gegen
@@ -126,14 +130,28 @@ def build_world_prompt(context: dict[str, Any]) -> str:
 
 def build_turn_prompt(context: dict[str, Any]) -> str:
     """Auftrag: Ergebnisse bewerten und die Geschichte fortsetzen."""
+    task = (
+        "Die Spieler haben gehandelt. Die Ergebnisse der Proben stehen unter "
+        "'action_results' und sind bindend - erfinde keine anderen Ausgaenge. "
+        "Erzaehle, was daraus folgt, und bereite die naechste Entscheidung vor. "
+        "Gib jedem lebenden Charakter drei bis fuenf Handlungsvorschlaege."
+    )
+    stall_streak = int(context.get("stall_streak") or 0)
+    if stall_streak >= STALL_ESCALATION_THRESHOLD:
+        task += (
+            f" WICHTIG: 'stall_streak' steht bei {stall_streak} -- die Gruppe kommt seit "
+            "mehreren Zuegen in Folge nicht voran (kein Erfolg, keine gewertete Handlung "
+            "gelungen). Beschreibe diesmal NICHT nur erneut Stimmung oder Bedrohung. "
+            "Liefere stattdessen eine konkrete, spielrelevante Wendung, die die Gruppe "
+            "wirklich weiterbringt -- ein greifbarer Hinweis, ein Fehler oder eine "
+            "Unachtsamkeit des Gegners, ein neuer erreichbarer Ort oder Ausweg, ein "
+            "Zeitdruck, der zum Handeln zwingt. Bilde das als 'changes' ab (z. B. "
+            "location.discover, fact.assert, knowledge.grant, entity.update), nicht nur "
+            "als Prosa ohne Aenderung."
+        )
     return _compose(
         context,
-        task=(
-            "Die Spieler haben gehandelt. Die Ergebnisse der Proben stehen unter "
-            "'action_results' und sind bindend - erfinde keine anderen Ausgaenge. "
-            "Erzaehle, was daraus folgt, und bereite die naechste Entscheidung vor. "
-            "Gib jedem lebenden Charakter drei bis fuenf Handlungsvorschlaege."
-        ),
+        task=task,
         extra=f"Handlungsarten: {_SUGGESTION_KINDS}",
     )
 

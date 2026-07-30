@@ -32,6 +32,12 @@ class Game(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     event_seq: Mapped[int] = mapped_column(sa.BigInteger, default=0)
     """Fortlaufende Ereignisnummer. Wird ausschliesslich vom Backend erhoeht."""
     events_since_summary: Mapped[int] = mapped_column(sa.Integer, default=0)
+    stall_streak: Mapped[int] = mapped_column(sa.Integer, default=0)
+    """Anzahl aufeinanderfolgender Zuege ohne Erfolg bei einer gewerteten
+    Handlung. Steigt bei einem erfolglosen Zug, faellt bei einem Erfolg
+    auf 0 zurueck; ein reiner "wait"-Zug aendert nichts. Signalisiert der
+    KI, wann sie statt weiterer Atmosphaere eine konkrete Wendung liefern
+    muss (siehe app.ai.prompts.build_turn_prompt)."""
     finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
     settings: Mapped[GameSettings] = relationship(

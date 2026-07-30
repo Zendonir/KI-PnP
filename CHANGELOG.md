@@ -25,6 +25,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   „Schloesser knacken"), auf die insgesamt 100 Punkte verteilt werden
   koennen. Sie stehen danach in der Handlungsleiste gleichberechtigt neben
   den vier Grundattributen zur Wahl.
+- Fortschritts-Zaehler gegen erzaehlerischen Stillstand: kommt eine Gruppe
+  zwei Zuege in Folge bei keiner gewerteten Handlung zum Erfolg (auch ein
+  abgelehnter Versuch zaehlt), muss die KI ab dem naechsten Zug eine
+  konkrete, spielrelevante Wendung liefern — einen greifbaren Hinweis, den
+  Fehler eines Gegners, einen neuen Weg — statt nur weiterer Atmosphaere
+  ohne Fortschritt. Ein einzelner Erfolg setzt den Zaehler sofort zurueck.
+  Gilt auch offline: der Spielleiter ohne KI-Schluessel greift ab dem
+  Schwellwert auf eigene, konkrete statt vager Erzaehl-Beats zurueck.
 - Wuerfel-Popup: nach einer Probe erscheint eine kurze Rollanimation mit
   dem Ergebnis (Erfolg, kritischer Erfolg, Patzer usw.), bevor die schon
   im Hintergrund fertiggestellte Erzaehlung samt Sprachausgabe sichtbar

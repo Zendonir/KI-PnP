@@ -74,6 +74,7 @@ class ContextBuilder:
             "summaries": await self._summaries_payload(),
             "recent_events": await self._recent_events_payload(),
             "action_results": action_results or [],
+            "stall_streak": self._game.stall_streak,
         }
 
     async def build_summary_context(self, *, from_seq: int) -> dict[str, Any]:

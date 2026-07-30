@@ -52,7 +52,7 @@ from app.schemas.api import ActionSubmitRequest
 from app.services import events as ev
 from app.services import interventions
 from app.services.context import ContextBuilder
-from app.services.events import EventRecorder, increment_game_counter
+from app.services.events import EventRecorder, increment_game_counter, reset_game_counter
 from app.services.runtime_settings import get_effective_tts
 from app.services.state_changes import StateChangeApplier
 from app.services.views import character_to_domain
@@ -614,6 +614,22 @@ class TurnService:
                     **outcome,
                 }
             )
+
+        # Erfolglose Zuege in Folge zaehlen -- signalisiert der KI, wann sie
+        # statt weiterer Atmosphaere eine konkrete Wendung liefern muss
+        # (siehe ContextBuilder.build_turn_context / prompts.build_turn_prompt).
+        # Ein reiner "wait"-Zug (niemand hat es versucht) aendert nichts;
+        # ein abgelehnter Versuch zaehlt wie ein Fehlschlag als Stillstand.
+        graded_results = [r for r in results if r.get("kind") != "wait"]
+        if graded_results:
+            made_progress = any(
+                r.get("degree") in ("success", "critical_success", "partial")
+                for r in graded_results
+            )
+            if made_progress:
+                await reset_game_counter(self._session, game, Game.stall_streak)
+            else:
+                await increment_game_counter(self._session, game, Game.stall_streak)
 
         await self._session.commit()
         await self._recorder.flush_to_clients(game.id)
