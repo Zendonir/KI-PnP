@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     app_name: str = "KI-PnP"
     environment: Literal["dev", "test", "prod"] = "dev"
     debug: bool = False
+    git_sha: str = "dev"
+    """Kurzer Commit-Hash des Baus. Beim Bauen des Images gesetzt, damit sich
+    anhand von /api/health erkennen laesst, welcher Stand tatsaechlich
+    laeuft -- sonst schwer zu unterscheiden von einem aelteren ":latest"."""
     public_base_url: str = "http://localhost:8080"
     """Basis-URL, unter der das Frontend erreichbar ist (fuer Beitrittslinks)."""
 

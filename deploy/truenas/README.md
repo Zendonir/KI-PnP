@@ -162,6 +162,22 @@ gewünschte Version setzen, etwa `:0.2.0` statt `:latest`. Migrationen laufen
 beim Start von selbst. Für den produktiven Betrieb ist eine feste Version
 ratsam — `:latest` ändert sich unbemerkt.
 
+**Wie prüfe ich, welcher Stand tatsächlich läuft?** `:latest` in der Registry
+wird nur neu gebaut, wenn im Repository ein Tag `v*` erscheint oder jemand
+den Workflow *Release-Images* von Hand anstößt (*Actions* → *Run workflow*)
+— ein Zusammenführen in `main` allein löst das nicht aus. Ein frisch
+gezogenes `:latest` kann also trotzdem der alte Stand sein. Zwei Wege, das
+zu erkennen:
+
+- Auf der Startseite der Oberfläche steht klein im Fußbereich
+  `vX.Y.Z · <Commit>`.
+- `curl http://<adresse>:30080/api/health` nennt dasselbe unter `version`
+  und `git_sha`.
+
+Stimmt der Commit nicht mit dem erwarteten überein, wurde entweder das
+Image nicht neu gebaut oder der Container zieht es nicht neu — dann hilft
+in der App-Oberfläche *Update* bzw. das Image von Hand erneut ziehen.
+
 **Von außen erreichbar machen.** Für den Zugriff über das Internet gehört ein
 Reverse Proxy mit TLS davor (etwa Traefik oder Nginx Proxy Manager auf
 demselben Server). Danach `PUBLIC_BASE_URL` auf die öffentliche Adresse

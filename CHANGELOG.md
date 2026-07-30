@@ -37,6 +37,11 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 - Ältere Aufnahmen einer Runde geben ihre Daten wieder frei
   (`AUDIO_KEEP_LAST`); der Auftrag bleibt als Protokolleintrag erhalten.
 
+- Versionsanzeige: `/api/health` nennt jetzt `version` und `git_sha`, die
+  Startseite zeigt beides klein im Fußbereich. Damit lässt sich einem
+  gezogenen `:latest`-Image ansehen, ob es tatsächlich einen neuen Stand
+  enthält.
+
 ### Geändert
 
 - Der Medien-Worker läuft in `docker-compose.yml` nicht mehr in einem Profil,

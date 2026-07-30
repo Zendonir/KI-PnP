@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as installed_version
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +15,11 @@ from app.api.v1.router import api_router, ws_router
 from app.core.config import Settings, get_settings
 from app.core.container import Container
 from app.core.errors import register_exception_handlers
+
+try:
+    APP_VERSION = installed_version("ki-pnp-backend")
+except PackageNotFoundError:  # z. B. beim Ausfuehren ohne Installation (Tests)
+    APP_VERSION = "0.0.0-dev"
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s: %(message)s"
@@ -55,7 +62,7 @@ def create_app(settings: Settings | None = None, container: Container | None = N
     app = FastAPI(
         title="KI-PnP",
         description=DESCRIPTION,
-        version="0.1.0",
+        version=APP_VERSION,
         lifespan=lifespan,
         openapi_url="/api/openapi.json",
         docs_url="/api/docs",
@@ -75,9 +82,16 @@ def create_app(settings: Settings | None = None, container: Container | None = N
 
     @app.get("/api/health", tags=["system"])
     async def health() -> dict[str, str]:
-        """Einfacher Gesundheitscheck fuer Container und Reverse Proxy."""
+        """Einfacher Gesundheitscheck fuer Container und Reverse Proxy.
+
+        Nennt auch Version und Commit -- sonst laesst sich einem laufenden
+        Container nicht ansehen, ob ein ":latest"-Zug tatsaechlich einen
+        neuen Stand gebracht hat.
+        """
         return {
             "status": "ok",
+            "version": APP_VERSION,
+            "git_sha": resolved.git_sha,
             "ai_provider": app_container.llm.name,
             "tts_provider": app_container.tts.name,
         }
