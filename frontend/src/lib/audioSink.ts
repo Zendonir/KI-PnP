@@ -23,11 +23,21 @@ export interface SinkPreferences {
   unlocked: boolean;
 }
 
-/** Eine tonlose, gültige MP3-Datei — dient nur der Freischaltung. */
-const SILENT_MP3 =
-  "data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQxAADB8AhSmxhIIEVCSiJrDCBKKw0oag" +
-  "AQmYWGhAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB" +
-  "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB";
+/** Eine tonlose, gueltige WAV-Datei (0,05 s) - dient nur der Freischaltung.
+ *
+ * Bewusst WAV und nicht MP3: ein von Hand zusammengesetzter MP3-Rahmen wird
+ * von Browsern als "no supported source" abgewiesen, womit die Freischaltung
+ * stillschweigend nie zustande kaeme. Der WAV-Kopf ist dagegen ueberschaubar
+ * und wird ueberall verstanden.
+ */
+const SILENT_WAV =
+  "data:audio/wav;base64," +
+  "UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA" +
+  "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA" +
+  "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA" +
+  "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA" +
+  "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA" +
+  "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
 
 export function loadSinkPreferences(isHost: boolean): SinkPreferences {
   try {
@@ -77,7 +87,7 @@ export class AudioSink {
   async unlock(): Promise<boolean> {
     const element = this.ensureElement();
     try {
-      element.src = SILENT_MP3;
+      element.src = SILENT_WAV;
       element.muted = true;
       await element.play();
       element.pause();
@@ -112,6 +122,16 @@ export class AudioSink {
     } catch {
       this.playing = false;
     }
+  }
+
+  /** Nimmt eine zurueckgelegte Aufnahme wieder auf.
+   *
+   * Scheitert die Wiedergabe an der fehlenden Freischaltung, bleibt die
+   * Aufnahme in der Warteschlange liegen. Nach dem Freischalten holt dieser
+   * Aufruf sie hervor -- ohne ihn bliebe die erste Aufnahme des Abends stumm.
+   */
+  resume(): void {
+    void this.drain();
   }
 
   stop(): void {

@@ -131,8 +131,13 @@ Spielleitung spielt sie ab. Jedes Gerät kann sich über den Schalter
 *Ton hier* im Reiter *Szene* selbst stumm schalten oder die Ausgabe
 übernehmen.
 
-Safari auf dem iPhone erlaubt Ton erst nach einer Berührung: einmal auf
-*Ton hier* tippen — danach spielt jede weitere Aufnahme von selbst.
+Safari auf dem iPhone erlaubt Ton erst nach einer Berührung. Der Schalter
+heißt dann *Freischalten*; ein Antippen gibt den Ton frei und holt eine
+wartende Aufnahme nach. Danach spielt jede weitere von selbst.
+
+Bleibt die Vertonung aus — kein Schlüssel, kein Guthaben, Dienst nicht
+erreichbar —, liest das Gerät die Erzählung selbst vor. Die Runde wartet nie
+auf den Ton.
 
 ## Betrieb
 
@@ -172,7 +177,8 @@ Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren.
 | Oberfläche lädt, aber jede Aktion meldet einen Fehler | Backend nicht bereit. Logs des Containers `backend` prüfen; meist stimmt das Kennwort in `DATABASE_URL` nicht mit `POSTGRES_PASSWORD` überein |
 | QR-Code führt ins Leere | `PUBLIC_BASE_URL` zeigt nicht auf die tatsächliche Adresse samt Port |
 | Backend startet immer wieder neu | Datenbank noch nicht bereit — der Start wartet bis zu zwei Minuten; hält es länger an, in den Logs von `db` nachsehen |
-| Keine Sprachausgabe | Im Reiter *Szene* muss *Ton hier* eingeschaltet sein; auf dem iPhone erlaubt Safari Ton erst nach einer Berührung — einmal auf ↻ tippen |
+| Keine Sprachausgabe | Im Reiter *Szene* muss der Schalter aktiv sein; steht dort *Freischalten*, einmal antippen — Safari verlangt eine Berührung |
+| „Für diese Runde ist die Sprachausgabe abgeschaltet" | Die Runde wurde ohne Sprachausgabe angelegt. Das lässt sich nur beim Erstellen wählen, nicht nachträglich |
 | Rechts steht „Gerätestimme" statt „Serverstimme" | Es kommt keine Aufnahme vom Server. Logs des Containers `worker` prüfen: fehlt `OPENAI_API_KEY`, meldet er den Auftrag als fehlgeschlagen |
 | Der Worker meldet `401` | Der Schlüssel ist ungültig oder hat kein Guthaben. Bei einem lokalen Dienst darf `TTS_API_KEY` leer bleiben |
 | Der Worker meldet einen Verbindungsfehler | `TTS_BASE_URL` ist vom Container aus nicht erreichbar. Bei einem lokalen Dienst die IP des Servers verwenden, nicht `localhost` |

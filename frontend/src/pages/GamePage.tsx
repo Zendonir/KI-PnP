@@ -351,6 +351,7 @@ function TableView({
               token={token}
               isHost={state.is_host}
               playback={state.game.settings.audio_playback ?? "host"}
+              enabled={state.game.settings.tts_enabled}
               audio={state.audio}
               latest={latestNarration}
               lastMessage={lastMessage}

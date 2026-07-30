@@ -182,9 +182,16 @@ Spielleitung; die Rundeneinstellung `audio_playback` erlaubt `host` (Vorgabe),
 `all` oder `none`. Jedes Gerät kann sich über den Schalter *Ton hier* selbst
 stumm schalten oder die Ausgabe übernehmen.
 
-**Auf dem iPhone** erlaubt Safari Ton erst nach einer Berührung. Der Schalter
-*Ton hier* schaltet die Wiedergabe frei; ab dann spielt jede weitere Aufnahme
-von selbst. Bleibt es still, genügt ein Tippen auf ↻.
+**Auf dem iPhone** erlaubt Safari Ton erst nach einer Berührung. Solange die
+Wiedergabe nicht freigegeben ist, heißt der Schalter *Freischalten*; ein
+Antippen gibt den Ton frei und holt eine bereits wartende Aufnahme nach. Ab
+dann spielt jede weitere von selbst und der Schalter zeigt *Ton hier*, womit
+sich das Gerät wieder stumm schalten lässt.
+
+Scheitert die Vertonung — kein Schlüssel, kein Guthaben, Dienst nicht
+erreichbar —, liest das Gerät die Erzählung mit seiner eigenen Stimme vor.
+Still bleibt es nur, wenn die Runde ohne Sprachausgabe angelegt wurde
+(`tts_enabled: false`) oder `TTS_PROVIDER=none` gesetzt ist.
 
 ## Bedienung
 

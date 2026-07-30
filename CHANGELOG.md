@@ -29,7 +29,11 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   fest, wer mithören darf.
 - Freischaltung der Wiedergabe auf iPhone und iPad: ein dauerhaft bestehendes
   Audio-Element wird bei der ersten Berührung entsperrt, danach spielt jede
-  weitere Aufnahme von selbst.
+  weitere Aufnahme von selbst. Solange die Freigabe fehlt, heißt der Schalter
+  *Freischalten* und holt beim Antippen eine wartende Aufnahme nach.
+- Scheitert die Vertonung, liest das Gerät die Erzählung selbst vor. Still
+  bleibt es nur, wenn die Runde ohne Sprachausgabe angelegt wurde oder der
+  Anbieter `none` eingestellt ist.
 - Ältere Aufnahmen einer Runde geben ihre Daten wieder frei
   (`AUDIO_KEEP_LAST`); der Auftrag bleibt als Protokolleintrag erhalten.
 

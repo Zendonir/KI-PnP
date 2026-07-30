@@ -21,6 +21,7 @@ export function AudioControls({
   token,
   isHost,
   playback,
+  enabled,
   audio,
   latest,
   lastMessage,
@@ -30,6 +31,8 @@ export function AudioControls({
   isHost: boolean;
   /** Vorgabe der Runde: host | all | none */
   playback: string;
+  /** Wurde für diese Runde überhaupt Sprachausgabe gewünscht? */
+  enabled: boolean;
   /** Jüngster Sprachauftrag des Servers. */
   audio: AudioJob | null;
   /** Jüngste Narration — Grundlage für das Vorlesen im Browser. */
@@ -45,8 +48,18 @@ export function AudioControls({
   const spokenRef = useRef<string | null>(null);
   const blobsRef = useRef<string[]>([]);
 
-  const allowedByGame = playback !== "none" && (playback === "all" || isHost || preferences.isSpeaker);
+  const allowedByGame =
+    enabled && playback !== "none" && (playback === "all" || isHost || preferences.isSpeaker);
   const active = preferences.isSpeaker && allowedByGame;
+
+  // Liegt eine Aufnahme des Servers vor oder ist eine unterwegs? Nur dann
+  // schweigt das Gerät. Ein fehlgeschlagener Auftrag darf die Runde nicht
+  // stumm lassen — dann liest der Browser vor.
+  const serverPending = audio?.status === "pending" || audio?.status === "running";
+  const serverReady = audio?.status === "ready" && Boolean(audio.url);
+  // „skipped" heißt: es war bewusst nichts zu sprechen — etwa bei
+  // TTS_PROVIDER=none oder leerem Text. Dann liest auch das Gerät nicht vor.
+  const serverSkipped = audio?.status === "skipped";
 
   useEffect(() => saveSinkPreferences(preferences), [preferences]);
 
@@ -98,57 +111,99 @@ export function AudioControls({
   useEffect(() => {
     if (!active) return;
 
-    if (audio && audio.status === "ready" && audio.url) {
+    if (serverReady && audio) {
       if (spokenRef.current === audio.id) return;
       spokenRef.current = audio.id;
       void playServerAudio(audio);
       return;
     }
 
-    // Kein Serveraudio: der Browser liest vor.
-    if (audio && (audio.status === "pending" || audio.status === "running")) {
+    if (serverPending) {
       setStatus("Aufnahme wird erzeugt ...");
       return;
     }
-    if (latest && audio?.provider !== "openai") {
+    if (serverSkipped) return;
+
+    // Keine Aufnahme zu erwarten — sei es, weil keine angefordert wurde, oder
+    // weil die Vertonung scheiterte. In beiden Fällen liest der Browser vor,
+    // damit am Tisch niemand auf die Erzählung wartet.
+    if (audio?.status === "failed") {
+      setStatus("Serverstimme nicht erreichbar — das Gerät liest vor.");
+    }
+    if (latest) {
       if (spokenRef.current === latest.id) return;
       spokenRef.current = latest.id;
       speak(latest.text, { voiceName: voiceName || undefined });
     }
-  }, [active, audio, latest, voiceName, playServerAudio]);
+  }, [active, audio, serverPending, serverReady, serverSkipped, latest, voiceName, playServerAudio]);
 
   // Der Spielleiter kann die Wiedergabe für alle erneut auslösen.
   useEffect(() => {
     if (!active || !lastMessage || lastMessage.type !== "audio.replay") return;
     const payload = lastMessage.payload as { audio_id?: string; text?: string };
-    if (payload.audio_id && audio && payload.audio_id === audio.id && audio.url) {
+    if (payload.audio_id && audio && payload.audio_id === audio.id && serverReady) {
       void playServerAudio(audio, true);
     } else if (payload.text) {
       speak(payload.text, { voiceName: voiceName || undefined });
     }
-  }, [active, lastMessage, audio, voiceName, playServerAudio]);
+  }, [active, lastMessage, audio, serverReady, voiceName, playServerAudio]);
 
   const toggleSpeaker = async () => {
-    const next = !preferences.isSpeaker;
-    if (!next) {
+    // Ist dieses Gerät schon als Lautsprecher gewählt, aber noch nicht
+    // freigeschaltet, dient die Berührung genau dieser Freischaltung. Würde
+    // sie stattdessen stumm schalten, bräuchte es auf dem iPhone zwei
+    // Berührungen — und die erste bewirkte das Gegenteil des Gewünschten.
+    if (preferences.isSpeaker && !preferences.unlocked) {
+      const unlocked = await audioSink.unlock();
+      setPreferences({ isSpeaker: true, unlocked });
+      // Eine wartende Aufnahme in derselben Berührung nachholen. Gelingt das,
+      // ist die Freischaltung ohnehin erledigt — audioSink meldet es über
+      // onStarted. Damit genügt ein Antippen, selbst wenn der Browser die
+      // tonlose Datei ablehnt.
+      if (serverReady && audio) void playServerAudio(audio, true);
+      else audioSink.resume();
+      setStatus(unlocked ? "" : "Der Browser gibt den Ton nicht frei. Bitte erneut antippen.");
+      return;
+    }
+
+    if (preferences.isSpeaker) {
       audioSink.stop();
       stopSpeaking();
       setPreferences({ ...preferences, isSpeaker: false });
       return;
     }
+
     // Aus der Nutzeraktion heraus freischalten — iOS verlangt das.
     const unlocked = await audioSink.unlock();
     setPreferences({ isSpeaker: true, unlocked });
     if (!unlocked) setStatus("Zum Freischalten des Tons noch einmal antippen.");
-    else setStatus("");
+    else {
+      setStatus("");
+      audioSink.resume();
+    }
   };
 
   const repeat = () => {
-    if (audio && audio.status === "ready" && audio.url) void playServerAudio(audio, true);
+    if (serverReady && audio) void playServerAudio(audio, true);
     else if (latest) speak(latest.text, { voiceName: voiceName || undefined });
   };
 
-  const serverSide = audio?.provider === "openai";
+  // „Serverstimme" nur behaupten, wenn tatsächlich eine Aufnahme vorliegt oder
+  // unterwegs ist — nach einem Fehlschlag spricht das Gerät selbst.
+  const serverSide = serverPending || serverReady;
+
+  // Gewählt, aber noch nicht freigeschaltet: dann ist die Berührung zum
+  // Freischalten gemeint und nicht zum Stummschalten.
+  const needsUnlock = active && !preferences.unlocked;
+
+  // Ohne Sprachausgabe für diese Runde gibt es nichts zu bedienen.
+  if (!enabled) {
+    return (
+      <p className="text-xs text-parchment/45">
+        Für diese Runde ist die Sprachausgabe abgeschaltet.
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-2">
@@ -157,9 +212,15 @@ export function AudioControls({
           variant={active ? "primary" : "ghost"}
           className="px-3"
           onClick={() => void toggleSpeaker()}
-          title={active ? "Dieses Gerät gibt Ton aus" : "Dieses Gerät ist stumm"}
+          title={
+            needsUnlock
+              ? "Ton freischalten — der Browser verlangt eine Berührung"
+              : active
+                ? "Dieses Gerät gibt Ton aus"
+                : "Dieses Gerät ist stumm"
+          }
         >
-          {active ? "🔊 Ton hier" : "🔇 Stumm"}
+          {needsUnlock ? "🔊 Freischalten" : active ? "🔊 Ton hier" : "🔇 Stumm"}
         </Button>
 
         <Button
@@ -205,10 +266,10 @@ export function AudioControls({
         </select>
       )}
 
-      {active && !preferences.unlocked && serverSide && (
+      {needsUnlock && (
         <p className="text-xs text-ember-400">
-          Safari braucht eine Berührung: einmal auf ↻ tippen, danach spielt jede
-          Aufnahme von selbst.
+          Safari braucht eine Berührung: einmal auf „Freischalten" tippen, danach
+          spielt jede Aufnahme von selbst.
         </p>
       )}
 
