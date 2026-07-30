@@ -27,6 +27,7 @@ ACTION_KINDS: tuple[str, ...] = (
     "cast",
     "use_item",
     "flee",
+    "wait",
     "custom",
 )
 
@@ -206,6 +207,12 @@ class ClassicRuleSet:
             )
 
         kind = request.kind if request.kind in ACTION_KINDS else "custom"
+
+        if kind == "wait":
+            # Bewusstes Nichtstun: immer erlaubt, kostet nichts und braucht
+            # keine Probe -- es gibt nichts zu wuerfeln, wenn niemand etwas
+            # versucht.
+            return ActionPlan(allowed=True)
 
         if kind == "use_item":
             item = str(request.payload.get("item") or request.target_ref or "").strip()

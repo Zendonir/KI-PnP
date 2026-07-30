@@ -70,7 +70,7 @@ Jede Aenderung darf ein Feld "reason" mit einer kurzen Begruendung enthalten.
 Vorschlaege mit unbekannten Namen werden verworfen.
 """
 
-_SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, custom"
+_SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, wait, custom"
 
 STAT_PROMPT_SYSTEM = """\
 Du bist ein Regel-Assistent fuer ein Pen-&-Paper-Rollenspiel. Deine einzige

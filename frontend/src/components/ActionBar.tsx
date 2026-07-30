@@ -13,6 +13,7 @@ const KIND_ICONS: Record<string, string> = {
   cast: "✨",
   use_item: "🎒",
   flee: "🏃",
+  wait: "🧘",
   custom: "✍️",
 };
 
@@ -100,6 +101,18 @@ export function ActionBar({
           </button>
         ))}
       </div>
+
+      <Button
+        variant="ghost"
+        className="w-full"
+        disabled={disabled || busy}
+        onClick={() => void send("wait", "Ich unternehme nichts und beobachte die Lage.")}
+      >
+        <span className="mr-1.5" aria-hidden>
+          {KIND_ICONS.wait}
+        </span>
+        Nichts tun
+      </Button>
 
       <div className="flex gap-2">
         <input

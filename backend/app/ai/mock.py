@@ -215,9 +215,14 @@ class MockLLMProvider:
             elif degree == "partial":
                 lines.append(f"{actor} kommt nur halb durch: {text}")
                 public_events.append(f"{actor}: {text} (Teilerfolg)")
-            else:
+            elif degree in ("failure", "critical_failure"):
                 lines.append(f"{actor} scheitert: {text}")
                 public_events.append(f"{actor}: {text} (Fehlschlag)")
+            else:
+                # Keine Probe noetig (z. B. bewusstes Abwarten) -- weder
+                # Erfolg noch Fehlschlag, also auch keine Wertung dazu.
+                lines.append(f"{actor}: {text}")
+                public_events.append(f"{actor}: {text}")
 
         if not lines:
             lines.append("Die Gruppe zoegert, und die Szene haelt den Atem an.")

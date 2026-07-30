@@ -303,6 +303,23 @@ class TestTurnLoop:
         assert state["dice_rolls"], "Es muss gewuerfelt worden sein"
         assert len(state["narrations"]) >= 2
 
+    async def test_wait_produces_no_dice_roll(
+        self, client: AsyncClient, started_game: dict[str, Any]
+    ) -> None:
+        game_id = started_game["game_id"]
+        host = started_game["host"]
+        response = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "wait", "text": "Ich beobachte die Lage."},
+            headers=auth(host["token"]),
+        )
+        assert response.status_code == 201, response.text
+        await client.post(f"/api/v1/games/{game_id}/resolve", headers=auth(host["token"]))
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert not state["dice_rolls"], "Nichtstun braucht keine Probe"
+
     async def test_dice_rolls_are_recorded_with_difficulty(
         self, client: AsyncClient, started_game: dict[str, Any]
     ) -> None:

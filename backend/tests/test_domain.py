@@ -118,6 +118,19 @@ class TestRules:
         assert plan.check.bonus == 2
         assert plan.costs and plan.costs[0].stat == "stamina"
 
+    def test_wait_needs_no_check_and_no_cost(self) -> None:
+        """"Nichts tun" ist immer erlaubt, kostet nichts und braucht keine
+        Probe -- es gibt schlicht nichts zu wuerfeln."""
+        plan = ClassicRuleSet().plan(
+            ActionRequest(kind="wait", text="Ich beobachte die Lage."),
+            _actor(),
+            difficulty="normal",
+            complexity="light",
+        )
+        assert plan.allowed
+        assert plan.check is None
+        assert plan.costs == []
+
     def test_stat_hint_overrides_kind_mapping(self) -> None:
         """Eine frei formulierte Handlung ("custom") wuerfelt sonst immer auf
         Intelligenz -- mit einem gueltigen stat_hint (von der KI-Einschaetzung

@@ -20,6 +20,10 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   wird beziehungsweise Ton abspielt. Die KI und die Vertonung laufen
   bereits waehrend der Animation — ein Klick auf „Weiter" blendet nur das
   bereits fertige Ergebnis ein, ohne weitere Wartezeit.
+- Neue Handlungsart „Nichts tun": bei jeder Runde als eigener, immer
+  sichtbarer Knopf verfuegbar (nicht nur unter den KI-Vorschlaegen).
+  Bewusstes Abwarten ist immer erlaubt, kostet nichts und braucht keine
+  Probe.
 - Seltenes Quick-Time-Event (rund 10 % der Zugaufloesungen): eine
   zufaellig ausgewaehlte, an derselben Stelle anwesende Person bekommt ein
   paar Sekunden lang die Moeglichkeit „einzugreifen" — nimmt sie rechtzeitig
