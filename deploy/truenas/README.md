@@ -7,34 +7,38 @@ reicht `/api` intern an das Backend weiter.
 
 ## Voraussetzungen
 
-Die Container-Images müssen veröffentlicht und lesbar sein, bevor TrueNAS sie
-ziehen kann. Beides ist einmalig zu erledigen:
-
-**1. Images bauen lassen.** Im Repository unter *Actions* → *Release-Images* →
-*Run workflow* (Branch `main`). Der Lauf dauert wenige Minuten und
-veröffentlicht:
+Die Container-Images liegen bereits veröffentlicht und ohne Anmeldung ziehbar
+in der GitHub Container Registry:
 
 ```
 ghcr.io/zendonir/ki-pnp-backend:latest
 ghcr.io/zendonir/ki-pnp-frontend:latest
 ```
 
-Bei jedem künftigen Tag `v*` geschieht das automatisch, dann zusätzlich mit
-der Versionsnummer als Bezeichner.
+Für die Installation ist also nichts vorzubereiten. Neu gebaut werden sie bei
+jedem Tag `v*` automatisch — dann zusätzlich mit der Versionsnummer als
+Bezeichner — oder auf Zuruf über *Actions* → *Release-Images* →
+*Run workflow*.
 
-**2. Pakete öffentlich schalten.** Bei einem privaten Repository sind auch die
-Images zunächst privat, und TrueNAS scheitert beim Herunterladen mit
-`denied` oder `manifest unknown`. Auf der GitHub-Profilseite unter *Packages*
-jeweils `ki-pnp-backend` und `ki-pnp-frontend` öffnen → *Package settings* →
-*Change visibility* → **Public**.
+<details>
+<summary>Falls das Herunterladen mit <code>denied</code> scheitert</summary>
 
-Wer die Images privat halten möchte, muss sich auf dem TrueNAS-Server
-stattdessen einmalig anmelden (SSH, als root):
+Dann sind die Pakete privat. Das passiert, wenn das Repository privat ist oder
+die Sichtbarkeit der Pakete umgestellt wurde. Zwei Wege:
+
+Auf der GitHub-Profilseite unter *Packages* jeweils `ki-pnp-backend` und
+`ki-pnp-frontend` öffnen → *Package settings* → *Change visibility* →
+**Public**.
+
+Oder die Images privat halten und sich auf dem TrueNAS-Server einmalig
+anmelden (SSH, als root):
 
 ```bash
 docker login ghcr.io -u <github-benutzername>
 # Kennwort: ein Personal Access Token mit dem Recht read:packages
 ```
+
+</details>
 
 ## Installation
 
@@ -117,8 +121,8 @@ Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren.
 
 | Symptom | Ursache und Abhilfe |
 |---|---|
-| `denied` oder `manifest unknown` beim Herunterladen | Die GHCR-Pakete sind noch privat — siehe Voraussetzungen, Schritt 2 |
-| `manifest unknown` trotz öffentlicher Pakete | Der Workflow *Release-Images* lief noch nicht; einmal von Hand starten |
+| `denied` beim Herunterladen | Die GHCR-Pakete sind privat — siehe den ausklappbaren Hinweis unter *Voraussetzungen* |
+| `manifest unknown` | Der gewählte Bezeichner existiert nicht. `:latest` ist vorhanden; Versionsbezeichner entstehen erst mit einem Tag `v*` |
 | Oberfläche lädt, aber jede Aktion meldet einen Fehler | Backend nicht bereit. Logs des Containers `backend` prüfen; meist stimmt das Kennwort in `DATABASE_URL` nicht mit `POSTGRES_PASSWORD` überein |
 | QR-Code führt ins Leere | `PUBLIC_BASE_URL` zeigt nicht auf die tatsächliche Adresse samt Port |
 | Backend startet immer wieder neu | Datenbank noch nicht bereit — der Start wartet bis zu zwei Minuten; hält es länger an, in den Logs von `db` nachsehen |
