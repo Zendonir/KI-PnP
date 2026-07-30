@@ -109,32 +109,67 @@ class StateChangeApplier:
     async def apply(
         self, proposals: list[ch.StateChange], *, source: str = "rules"
     ) -> ChangeApplication:
-        """Wendet bereits typisierte Aenderungen an."""
+        """Wendet bereits typisierte Aenderungen an.
+
+        Zwei Durchlaeufe: Aenderungen, die im ersten Durchlauf an einer noch
+        fehlenden Referenz scheitern -- etwa eine Quest, deren Auftraggeber
+        im selben KI-Vorschlag erst an spaeterer Stelle per entity.create
+        entsteht -- bekommen einen zweiten Versuch, nachdem alles andere
+        schon angewendet ist. Die KI liefert 'changes' nicht zuverlaessig in
+        abhaengigkeitsgerechter Reihenfolge; ohne diesen zweiten Durchlauf
+        wird so ein Vorschlag faelschlich endgueltig abgelehnt, obwohl die
+        Referenz Sekundenbruchteile spaeter im selben Stapel existiert.
+        Scheitert eine Aenderung auch im zweiten Durchlauf, gilt sie
+        endgueltig als abgelehnt.
+        """
         application = ChangeApplication()
+        retry: list[ch.StateChange] = []
         for change in proposals:
-            handler = self._handlers().get(change.op)
-            if handler is None:  # pragma: no cover - durch Union ausgeschlossen
-                application.rejected.append(
-                    {"change": change.model_dump(), "reason": f"Unbekannte Operation {change.op}"}
-                )
-                continue
-            try:
-                summary = await handler(change)
-            except ChangeRejected as exc:
-                application.rejected.append({"change": change.model_dump(), "reason": str(exc)})
-                continue
-            await self._session.flush()
-            payload = change.model_dump()
-            payload["source"] = source
-            await self._recorder.record(
-                self._game,
-                type=ev.STATE_CHANGED,
-                summary=summary,
-                payload=payload,
-                turn_id=self._turn_id,
-            )
-            application.accepted.append(payload)
+            if not await self._apply_one(change, source, application, final=False):
+                retry.append(change)
+        for change in retry:
+            await self._apply_one(change, source, application, final=True)
         return application
+
+    async def _apply_one(
+        self,
+        change: ch.StateChange,
+        source: str,
+        application: ChangeApplication,
+        *,
+        final: bool,
+    ) -> bool:
+        """Versucht eine einzelne Aenderung anzuwenden.
+
+        Liefert False, wenn sie im ersten Durchlauf (final=False) an einer
+        fehlenden Referenz gescheitert ist und einen Retry verdient -- in
+        diesem Fall wird noch nichts protokolliert. Liefert sonst True.
+        """
+        handler = self._handlers().get(change.op)
+        if handler is None:  # pragma: no cover - durch Union ausgeschlossen
+            application.rejected.append(
+                {"change": change.model_dump(), "reason": f"Unbekannte Operation {change.op}"}
+            )
+            return True
+        try:
+            summary = await handler(change)
+        except ChangeRejected as exc:
+            if not final:
+                return False
+            application.rejected.append({"change": change.model_dump(), "reason": str(exc)})
+            return True
+        await self._session.flush()
+        payload = change.model_dump()
+        payload["source"] = source
+        await self._recorder.record(
+            self._game,
+            type=ev.STATE_CHANGED,
+            summary=summary,
+            payload=payload,
+            turn_id=self._turn_id,
+        )
+        application.accepted.append(payload)
+        return True
 
     async def _record_rejections(self, rejected: list[dict[str, Any]], source: str) -> None:
         for entry in rejected:

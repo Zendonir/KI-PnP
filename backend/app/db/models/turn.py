@@ -77,6 +77,49 @@ class TurnAck(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class GroupProposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Eine als Gruppenereignis markierte Handlung ("wir gehen dorthin").
+
+    Andere aktive Spieler am selben Ort werden gefragt, ob sie mitmachen
+    wollen (siehe GroupProposalResponse). Wer zustimmt, teilt sich
+    dieselbe Handlung (kind/text/stat) -- kein eigener Text noetig --,
+    wuerfelt aber mit eigenem Charakterwert und bekommt einen Bonus. Genau
+    ein Vorschlag je Zug (turn_id unique): ein zweiter Versuch im selben
+    Zug wird ignoriert, statt Vorschlaege zu verschachteln."""
+
+    __tablename__ = "group_proposals"
+
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("turns.id", ondelete="CASCADE"), unique=True
+    )
+    initiator_player_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("players.id", ondelete="CASCADE")
+    )
+    initiator_character_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("characters.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(sa.String(30))
+    text: Mapped[str] = mapped_column(sa.Text)
+    stat: Mapped[str | None] = mapped_column(sa.String(60), nullable=True)
+
+
+class GroupProposalResponse(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Antwort einer Person auf einen Gruppenvorschlag."""
+
+    __tablename__ = "group_proposal_responses"
+    __table_args__ = (
+        sa.UniqueConstraint("proposal_id", "player_id", name="uq_group_proposal_response"),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("group_proposals.id", ondelete="CASCADE"), index=True
+    )
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
+    accepted: Mapped[bool] = mapped_column(sa.Boolean)
+
+
 class Action(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Eine von einem Spieler eingereichte Handlung."""
 

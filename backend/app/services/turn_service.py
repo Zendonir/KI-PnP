@@ -32,7 +32,7 @@ from app.ai import prompts
 from app.ai.base import LLMProvider, LLMRequest, extract_json
 from app.ai.contracts import NarrationResponse, SummaryResponse, WorldResponse
 from app.core.config import Settings
-from app.core.errors import AIError, ConflictError, ValidationError
+from app.core.errors import AIError, ConflictError, NotFoundError, ValidationError
 from app.db.base import utcnow
 from app.db.models import (
     Action,
@@ -40,6 +40,8 @@ from app.db.models import (
     Character,
     DiceRoll,
     Game,
+    GroupProposal,
+    GroupProposalResponse,
     Narration,
     Player,
     SceneSummary,
@@ -68,6 +70,26 @@ selten genug, um zu ueberraschen (siehe _maybe_offer_intervention)."""
 _POOR_FIT_DIFFICULTY_DELTA = 4
 """Zusaetzliche Schwierigkeit, wenn das selbst gewaehlte Attribut nur locker
 zur Handlung passt (siehe _judge_stat_fit)."""
+
+_GROUP_FOLLOW_BONUS = 2
+"""Bonus auf den Wurf fuer jeden, der einem Gruppenereignis folgt (siehe
+respond_to_group_proposal)."""
+
+_PROGRESS_OPS = frozenset(
+    {
+        "quest.create",
+        "quest.update",
+        "location.create",
+        "location.discover",
+        "entity.create",
+        "fact.assert",
+        "character.move",
+    }
+)
+"""'changes', die echten Erzaehl-Fortschritt bedeuten -- im Gegensatz zu
+z. B. reinen Stat-Anpassungen oder Beziehungswerten. Sobald eine davon in
+einem Zug tatsaechlich angewendet wurde, gilt stall_streak als
+zurueckgesetzt, unabhaengig vom Wuerfelergebnis (siehe _narrate)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +380,45 @@ class TurnService:
         if not character.is_alive:
             raise ConflictError(f"{character.name} ist nicht handlungsfaehig.")
 
+        payload = dict(request.payload)
+        if request.stat:
+            payload["stat"] = request.stat
+        action = await self._upsert_action(
+            game,
+            turn,
+            player,
+            character,
+            kind=request.kind,
+            text=request.text,
+            target_ref=request.target_ref,
+            payload=payload,
+        )
+
+        if request.group_event and request.kind != "wait":
+            await self._offer_group_proposal(game, turn, player, character, request)
+
+        await self._session.commit()
+        await self._recorder.flush_to_clients(game.id)
+        return action
+
+    async def _upsert_action(
+        self,
+        game: Game,
+        turn: Turn,
+        player: Player,
+        character: Character,
+        *,
+        kind: str,
+        text: str,
+        target_ref: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> Action:
+        """Legt die Handlung einer Person fuer diesen Zug an oder ersetzt sie.
+
+        Gemeinsame Grundlage von submit_action (eigene Eingabe) und
+        respond_to_group_proposal (uebernommene Gruppenhandlung) -- beide
+        fuellen denselben "ich bin dran"-Platz im Zug.
+        """
         stmt = sa.select(Action).where(
             Action.turn_id == turn.id,
             Action.player_id == player.id,
@@ -373,28 +434,122 @@ class TurnService:
             )
             self._session.add(action)
 
-        action.kind = request.kind
-        action.text = request.text
-        action.target_ref = request.target_ref
-        payload = dict(request.payload)
-        if request.stat:
-            payload["stat"] = request.stat
-        action.payload = payload
+        action.kind = kind
+        action.text = text
+        action.target_ref = target_ref
+        action.payload = dict(payload or {})
         action.status = "pending"
         await self._session.flush()
 
         await self._recorder.record(
             game,
             type=ev.ACTION_SUBMITTED,
-            summary=f"{character.name} plant: {request.text}",
-            payload={"action_id": str(action.id), "kind": request.kind, "text": request.text},
+            summary=f"{character.name} plant: {text}",
+            payload={"action_id": str(action.id), "kind": kind, "text": text},
             turn_id=turn.id,
             actor_type="character",
             actor_id=character.id,
         )
+        return action
+
+    async def _offer_group_proposal(
+        self,
+        game: Game,
+        turn: Turn,
+        player: Player,
+        character: Character,
+        request: ActionSubmitRequest,
+    ) -> None:
+        """Bietet ein Gruppenereignis allen anderen erwarteten Spielern am Ort an.
+
+        Genau ein Vorschlag je Zug: existiert schon einer, wird die Markierung
+        stillschweigend ignoriert -- die eigene Handlung wurde trotzdem ganz
+        normal eingereicht.
+        """
+        existing = await self._session.execute(
+            sa.select(GroupProposal.id).where(GroupProposal.turn_id == turn.id)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return
+
+        proposal = GroupProposal(
+            turn_id=turn.id,
+            initiator_player_id=player.id,
+            initiator_character_id=character.id,
+            kind=request.kind,
+            text=request.text,
+            stat=request.stat,
+        )
+        self._session.add(proposal)
+        await self._session.flush()
+
+        targets = await expected_player_ids(self._session, game, turn.location_id)
+        targets.discard(player.id)
+        for target_id in targets:
+            await self._hub.publish(
+                game.id,
+                "group_proposal.offered",
+                {
+                    "proposal_id": str(proposal.id),
+                    "initiator": character.name,
+                    "text": request.text,
+                },
+                audience_player_id=target_id,
+            )
+
+    async def respond_to_group_proposal(
+        self, game: Game, proposal: GroupProposal, player: Player, *, accepted: bool
+    ) -> Turn:
+        """Nimmt die Antwort einer Person auf ein Gruppenereignis entgegen.
+
+        Bei Zustimmung entsteht eine eigene Handlung mit demselben
+        kind/text/stat wie der Vorschlag -- kein eigener Text noetig -- plus
+        einem Bonus auf den Wurf. Fuellt damit denselben "ich bin dran"-
+        Platz wie eine normale Einreichung, der Zug loest also ganz normal
+        auf, sobald alle reagiert haben.
+        """
+        turn = await self._session.get(Turn, proposal.turn_id)
+        if turn is None or turn.game_id != game.id:
+            raise NotFoundError("Dieser Gruppenvorschlag gehoert nicht zu dieser Runde.")
+        if turn.status != "collecting":
+            raise ConflictError("Fuer diesen Zug werden keine Antworten mehr angenommen.")
+        if player.id == proposal.initiator_player_id:
+            raise ConflictError("Der Vorschlag stammt von dir selbst.")
+
+        exists_stmt = sa.select(GroupProposalResponse.id).where(
+            GroupProposalResponse.proposal_id == proposal.id,
+            GroupProposalResponse.player_id == player.id,
+        )
+        if (await self._session.execute(exists_stmt)).scalar_one_or_none() is not None:
+            raise ConflictError("Du hast bereits geantwortet.")
+
+        self._session.add(
+            GroupProposalResponse(proposal_id=proposal.id, player_id=player.id, accepted=accepted)
+        )
+
+        if accepted:
+            character = await self._character_of(player)
+            if character is None or not character.is_alive:
+                raise ConflictError("Ohne handlungsfaehigen Charakter kann nicht gefolgt werden.")
+            payload: dict[str, Any] = {"group_bonus": _GROUP_FOLLOW_BONUS}
+            if proposal.stat:
+                payload["stat"] = proposal.stat
+            await self._upsert_action(
+                game,
+                turn,
+                player,
+                character,
+                kind=proposal.kind,
+                text=proposal.text,
+                payload=payload,
+            )
+
         await self._session.commit()
         await self._recorder.flush_to_clients(game.id)
-        return action
+
+        if await self.turn_ready(game, turn):
+            await self.resolve_turn(game, turn)
+        return turn
 
     async def pending_player_ids(self, turn: Turn) -> set[Any]:
         """Spieler, die in diesem Zug bereits eingereicht haben."""
@@ -590,6 +745,9 @@ class TurnService:
             if plan.check is not None and not auto_fail:
                 if fit and fit.difficulty_delta:
                     plan.check.difficulty += fit.difficulty_delta
+                group_bonus = int(action_payload.get("group_bonus") or 0)
+                if group_bonus:
+                    plan.check.bonus += group_bonus
                 roll = dice.roll(
                     plan.check.notation,
                     difficulty=plan.check.difficulty,
@@ -686,9 +844,12 @@ class TurnService:
                 }
             )
 
-        # Erfolglose Zuege in Folge zaehlen -- signalisiert der KI, wann sie
-        # statt weiterer Atmosphaere eine konkrete Wendung liefern muss
-        # (siehe ContextBuilder.build_turn_context / prompts.build_turn_prompt).
+        # Erfolglose Zuege in Folge zaehlen -- signalisiert der KI schon in
+        # ihrem eigenen Prompt fuer *diesen* Zug, wann sie eskalieren muss
+        # (siehe app.ai.prompts.build_turn_prompt). Deshalb hier, vor dem
+        # Kontextaufbau in _narrate, nicht erst danach. _narrate ergaenzt
+        # das anschliessend um ein staerkeres Signal: echten erzaehlerischen
+        # Fortschritt (siehe dort) -- unabhaengig vom Wuerfelergebnis.
         # Ein reiner "wait"-Zug (niemand hat es versucht) aendert nichts;
         # ein abgelehnter Versuch zaehlt wie ein Fehlschlag als Stillstand.
         graded_results = [r for r in results if r.get("kind") != "wait"]
@@ -853,6 +1014,18 @@ class TurnService:
 
         applier = StateChangeApplier(self._session, game, self._recorder, turn_id=turn.id)
         application = await applier.apply_raw(response.changes, source="ai")
+
+        # Ergaenzt das Wuerfel-basierte Signal aus _resolve_mechanics um ein
+        # staerkeres: eine gelungene Probe allein ist kein verlaessliches
+        # Zeichen fuer echten Fortschritt (die KI koennte turnweise
+        # "erfolgreiche", aber inhaltlich folgenlose Proben abhandeln, ohne
+        # die Geschichte je voranzubringen) -- umgekehrt kann aber auch ein
+        # fehlgeschlagener Zug die Handlung sehr wohl vorantreiben (eine
+        # Verwicklung, ein neuer Ort). Echter Fortschritt in den
+        # tatsaechlich angewendeten Aenderungen setzt den Zaehler deshalb
+        # in jedem Fall zurueck, unabhaengig vom Wuerfelergebnis.
+        if any(entry.get("op") in _PROGRESS_OPS for entry in application.accepted):
+            await reset_game_counter(self._session, game, Game.stall_streak)
 
         turn.status = "completed"
         turn.resolved_at = utcnow()

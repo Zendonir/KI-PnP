@@ -19,6 +19,8 @@ from app.db.models import (
     Fact,
     Game,
     GameSettings,
+    GroupProposal,
+    GroupProposalResponse,
     Knowledge,
     Location,
     Narration,
@@ -39,6 +41,7 @@ from app.schemas.api import (
     GameCreateRequest,
     GameOut,
     GameStateOut,
+    GroupProposalOut,
     LocationOut,
     NarrationOut,
     PendingRevealOut,
@@ -449,6 +452,32 @@ class GameService:
                     expected_player_ids=sorted(expected),
                 )
 
+        pending_group_proposal = None
+        if turn is not None:
+            proposal = (
+                await self._session.execute(
+                    sa.select(GroupProposal).where(GroupProposal.turn_id == turn.id)
+                )
+            ).scalars().first()
+            if proposal is not None and proposal.initiator_player_id != player.id:
+                responded_stmt = sa.select(GroupProposalResponse.id).where(
+                    GroupProposalResponse.proposal_id == proposal.id,
+                    GroupProposalResponse.player_id == player.id,
+                )
+                already_responded = (
+                    await self._session.execute(responded_stmt)
+                ).scalar_one_or_none() is not None
+                if not already_responded:
+                    initiator = await self._session.get(
+                        Character, proposal.initiator_character_id
+                    )
+                    pending_group_proposal = GroupProposalOut(
+                        id=proposal.id,
+                        initiator_name=initiator.name if initiator else "Jemand",
+                        kind=proposal.kind,
+                        text=proposal.text,
+                    )
+
         active_location_turns = (
             await self._active_location_turns(game) if player.role == "host" else None
         )
@@ -465,6 +494,7 @@ class GameService:
             ),
             turn=turn_out,
             pending_reveal=pending_reveal,
+            pending_group_proposal=pending_group_proposal,
             narrations=[
                 NarrationOut.model_validate(item) for item in reversed(narrations)
             ],

@@ -192,6 +192,10 @@ class ActionSubmitRequest(Schema):
     stat: str | None = Field(default=None, max_length=60)
     """Vom Spieler selbst gewaehltes Attribut oder frei benannter Skill,
     gegen den diese Handlung gewuerfelt werden soll."""
+    group_event: bool = False
+    """Markiert diese Handlung als Gruppenereignis -- andere aktive Spieler
+    am selben Ort werden gefragt, ob sie mitmachen wollen (siehe
+    GroupProposalOut)."""
 
 
 class DiceRollOut(Schema):
@@ -240,6 +244,17 @@ class PendingRevealOut(Schema):
     revealed: bool
     acknowledged_player_ids: list[uuid.UUID] = Field(default_factory=list)
     expected_player_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class GroupProposalOut(Schema):
+    """Ein als Gruppenereignis markierter Vorschlag, auf den die aufrufende
+    Person noch nicht geantwortet hat. Verschwindet aus dem eigenen Zustand,
+    sobald sie geantwortet hat -- unabhaengig davon, ob sie zugestimmt hat."""
+
+    id: uuid.UUID
+    initiator_name: str
+    kind: str
+    text: str
 
 
 class ActiveLocationTurnOut(Schema):
@@ -327,6 +342,7 @@ class GameStateOut(Schema):
     my_character: CharacterOut | None
     turn: TurnOut | None
     pending_reveal: PendingRevealOut | None = None
+    pending_group_proposal: GroupProposalOut | None = None
     narrations: list[NarrationOut]
     dice_rolls: list[DiceRollOut]
     quests: list[QuestOut]
@@ -355,6 +371,10 @@ class OkResponse(Schema):
 
 
 class InterventionRespondRequest(Schema):
+    accepted: bool
+
+
+class GroupProposalRespondRequest(Schema):
     accepted: bool
 
 

@@ -119,6 +119,7 @@ export const api = {
       target_ref?: string;
       payload?: Record<string, unknown>;
       stat?: string;
+      group_event?: boolean;
     },
   ) => request<unknown>(`/games/${gameId}/actions`, { method: "POST", body: payload, token }),
 
@@ -136,6 +137,13 @@ export const api = {
 
   respondIntervention: (gameId: string, token: string, interventionId: string, accepted: boolean) =>
     request<unknown>(`/games/${gameId}/interventions/${interventionId}/respond`, {
+      method: "POST",
+      body: { accepted },
+      token,
+    }),
+
+  respondGroupProposal: (gameId: string, token: string, proposalId: string, accepted: boolean) =>
+    request<GameState>(`/games/${gameId}/group-proposals/${proposalId}/respond`, {
       method: "POST",
       body: { accepted },
       token,

@@ -9,6 +9,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- Gruppenereignisse: eine Handlung laesst sich beim Absenden als
+  Gruppenereignis markieren ("Wir gehen zur Hoehle."). Andere aktive
+  Personen am selben Ort bekommen ein Angebot, mitzumachen. Wer zustimmt,
+  teilt sich dieselbe Handlung (kein eigener Text noetig), wuerfelt aber
+  mit dem eigenen Charakterwert und bekommt einen Bonus auf den Wurf. Der
+  Zug loest erst auf, wenn jede erwartete Person entweder die eigene
+  Handlung eingereicht oder auf das Angebot geantwortet hat.
 - Keine vorgefertigten Handlungsvorschlaege mehr in der Handlungsleiste:
   nur noch „Nichts tun" und ein Freitextfeld. Statt eines „Los"-Knopfes
   werden alle Attribute des Charakters gelistet (die vier Grundattribute
@@ -143,6 +150,17 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Behoben
 
+- KI-Vorschlaege (z. B. eine Quest samt Auftraggeber) konnten stillschweigend
+  scheitern, wenn die KI abhaengige Aenderungen in der "falschen"
+  Reihenfolge lieferte -- etwa eine Quest vor dem NSC, der sie vergibt. Ein
+  zweiter Anwendungsdurchlauf gibt so einer Aenderung jetzt eine zweite
+  Chance, nachdem der Rest bereits angewendet ist.
+- Der Fortschritts-Zaehler gegen erzaehlerischen Stillstand reagierte nur
+  auf Wuerfel-Erfolge -- eine Serie erfolgreicher, aber inhaltlich
+  folgenloser Proben konnte die Geschichte trotzdem zum Stillstand bringen,
+  ohne dass die KI eskalierte. Echter Fortschritt in den tatsaechlich
+  angewendeten Aenderungen (neue Quest, entdeckter Ort usw.) setzt den
+  Zaehler jetzt zusaetzlich zurueck, unabhaengig vom Wuerfelergebnis.
 - Rundenstart schlug mit einem Datenbankfehler fehl, wenn zwischen dem
   Anlegen eines Charakters und dem Klick auf „Abenteuer starten" mehr als
   eine automatische Statusabfrage lag (praktisch jede Lobby-Wartezeit über

@@ -6,6 +6,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ActionBar } from "../components/ActionBar";
 import { AudioControls } from "../components/AudioControls";
 import { DiceRollModal } from "../components/DiceRollModal";
+import { GroupProposalPrompt } from "../components/GroupProposalPrompt";
 import { InterventionPrompt } from "../components/InterventionPrompt";
 import {
   CharacterSheet,
@@ -572,6 +573,15 @@ function TableView({
           token={token}
           offer={interventionOffer}
           onDone={() => setInterventionOffer(null)}
+        />
+      )}
+
+      {state.pending_group_proposal && (
+        <GroupProposalPrompt
+          gameId={state.game.id}
+          token={token}
+          proposal={state.pending_group_proposal}
+          onDone={() => void onChanged()}
         />
       )}
       <div className="safe-top shrink-0">

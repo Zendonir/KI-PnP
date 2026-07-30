@@ -17,12 +17,13 @@ from app.api.deps import (
     TurnServiceDep,
 )
 from app.core.errors import ConflictError, NotFoundError
-from app.db.models import AudioJob, Event, Narration, Turn
+from app.db.models import AudioJob, Event, GroupProposal, Narration, Turn
 from app.schemas.api import (
     ActionOut,
     ActionSubmitRequest,
     EventOut,
     GameStateOut,
+    GroupProposalRespondRequest,
     InterventionRespondRequest,
     NarrationOut,
     OkResponse,
@@ -196,6 +197,29 @@ async def reveal_turn(
         raise NotFoundError("Dieser Zug gehoert nicht zu dieser Runde.")
     await turns.force_reveal_turn(host.game, turn)
     return await games.build_state(host.game, host.player)
+
+
+@router.post("/group-proposals/{proposal_id}/respond", response_model=GameStateOut)
+async def respond_group_proposal(
+    proposal_id: uuid.UUID,
+    body: GroupProposalRespondRequest,
+    principal: PrincipalDep,
+    games: GameServiceDep,
+    turns: TurnServiceDep,
+    session: SessionDep,
+) -> GameStateOut:
+    """Antwortet auf ein Gruppenereignis.
+
+    Bei Zustimmung entsteht die eigene Handlung automatisch (derselbe Text
+    und dasselbe Attribut wie beim Vorschlag) plus einem Bonus auf den Wurf.
+    """
+    proposal = await session.get(GroupProposal, proposal_id)
+    if proposal is None:
+        raise NotFoundError("Dieser Gruppenvorschlag existiert nicht.")
+    await turns.respond_to_group_proposal(
+        principal.game, proposal, principal.player, accepted=body.accepted
+    )
+    return await games.build_state(principal.game, principal.player)
 
 
 @router.post("/interventions/{intervention_id}/respond", response_model=OkResponse)

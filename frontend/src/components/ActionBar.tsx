@@ -20,10 +20,12 @@ export function ActionBar({
     text: string;
     stat?: string;
     payload?: Record<string, unknown>;
+    group_event?: boolean;
   }) => Promise<void>;
 }) {
   const [freeText, setFreeText] = useState("");
   const [markedItem, setMarkedItem] = useState<string | null>(null);
+  const [groupEvent, setGroupEvent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!character) {
@@ -56,9 +58,11 @@ export function ActionBar({
         text: text.trim(),
         ...(stat ? { stat } : {}),
         ...(markedItem ? { payload: { item: markedItem } } : {}),
+        ...(kind !== "wait" && groupEvent ? { group_event: true } : {}),
       });
       setFreeText("");
       setMarkedItem(null);
+      setGroupEvent(false);
     } finally {
       setBusy(false);
     }
@@ -95,6 +99,20 @@ export function ActionBar({
           <span aria-hidden>🧘</span>
         </Button>
       </div>
+
+      <button
+        type="button"
+        disabled={disabled || busy}
+        onClick={() => setGroupEvent((current) => !current)}
+        className={`flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-xs font-semibold transition disabled:opacity-50 ${
+          groupEvent
+            ? "border-ember-500 bg-ember-500/20 text-ember-400"
+            : "border-ink-700 bg-ink-800/60 text-parchment/70"
+        }`}
+      >
+        <span aria-hidden>🤝</span>
+        Als Gruppenereignis vorschlagen -- andere am Ort werden gefragt, ob sie mitmachen
+      </button>
 
       {character.inventory.length > 0 && (
         <details className="rounded-xl border border-ink-700 bg-ink-800/60 px-3 py-2">

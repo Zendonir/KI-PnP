@@ -133,6 +133,15 @@ export interface PendingReveal {
   expected_player_ids: string[];
 }
 
+/** Ein als Gruppenereignis markierter Vorschlag, auf den die eigene Person
+ * noch nicht geantwortet hat. */
+export interface GroupProposal {
+  id: string;
+  initiator_name: string;
+  kind: string;
+  text: string;
+}
+
 /** Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung. */
 export interface ActiveLocationTurn {
   turn_id: string;
@@ -240,6 +249,7 @@ export interface GameState {
   my_character: Character | null;
   turn: Turn | null;
   pending_reveal: PendingReveal | null;
+  pending_group_proposal: GroupProposal | null;
   narrations: Narration[];
   dice_rolls: DiceRoll[];
   quests: Quest[];
