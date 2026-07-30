@@ -40,7 +40,10 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 - Versionsanzeige: `/api/health` nennt jetzt `version` und `git_sha`, die
   Startseite zeigt beides klein im Fußbereich. Damit lässt sich einem
   gezogenen `:latest`-Image ansehen, ob es tatsächlich einen neuen Stand
-  enthält.
+  enthält. Beide Seiten lesen dieselbe Quelle (`backend/pyproject.toml`) —
+  ein von Hand über *Run workflow* ausgelöster Bau ohne neuen Tag zeigt
+  sonst auf der Startseite „vlatest", während `/api/health` weiterhin die
+  echte Paketversion nennt.
 
 ### Geändert
 
