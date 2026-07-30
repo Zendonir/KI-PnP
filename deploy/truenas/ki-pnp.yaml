@@ -126,6 +126,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Erst nach dem Backend starten: es spielt beim Hochfahren die
+      # Migrationen ein. Ohne diese Wartezeit fragt der Worker moeglicherweise
+      # Spalten ab, die noch gar nicht angelegt sind (z. B. nach einem
+      # Update auf eine neuere Version).
+      backend:
+        condition: service_healthy
     # Der Worker braucht keine Migrationen; das erledigt das Backend.
     entrypoint: ["python", "-m", "app.workers.media"]
     environment:

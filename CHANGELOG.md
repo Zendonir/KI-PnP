@@ -44,6 +44,10 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Geändert
 
+- Der Medien-Worker wartet jetzt auch auf das Backend (nicht nur auf die
+  Datenbank), bevor er startet. Sonst kann er nach einem Update kurzzeitig
+  Spalten abfragen, die das Backend erst beim Einspielen der Migrationen
+  anlegt — der Fehler heilte sich zwar von selbst, war aber vermeidbar.
 - Der Medien-Worker läuft in `docker-compose.yml` nicht mehr in einem Profil,
   sondern immer mit — ohne ihn entsteht bei serverseitiger Stimme kein Ton.
 - Die Sprachausgabe über OpenAI war bisher nur angedeutet und lieferte nie

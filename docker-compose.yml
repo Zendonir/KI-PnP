@@ -96,6 +96,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # Erst nach dem Backend starten: es spielt beim Hochfahren die
+      # Migrationen ein. Ohne diese Wartezeit fragt der Worker moeglicherweise
+      # Spalten ab, die noch gar nicht angelegt sind (z. B. nach einem
+      # Update). Der Fehler heilt sich zwar von selbst -- der Worker
+      # versucht es alle paar Sekunden erneut --, ist aber vermeidbar.
+      backend:
+        condition: service_healthy
     # Ohne das Standard-Entrypoint: Migrationen macht das Backend.
     entrypoint: ["python", "-m", "app.workers.media"]
     environment:
