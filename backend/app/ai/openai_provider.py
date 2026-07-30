@@ -6,10 +6,14 @@ Faellen als JSON-Text erwartet.
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from app.ai.base import LLMRequest, LLMResponse
 from app.core.errors import AIError
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider:
@@ -26,6 +30,7 @@ class OpenAICompatibleProvider:
         timeout: float = 120.0,
     ) -> None:
         self._model = model
+        self._token_field = "max_tokens"
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
@@ -33,9 +38,11 @@ class OpenAICompatibleProvider:
         )
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
-        payload = {
+        payload: dict[str, object] = {
             "model": self._model,
-            "max_tokens": request.max_tokens,
+            self._token_field: request.max_tokens,
+            # Erzwingt gueltiges JSON. Setzt voraus, dass der Prompt das Wort
+            # "JSON" enthaelt -- das tun unsere Prompts durchgaengig.
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": request.system},
@@ -43,6 +50,18 @@ class OpenAICompatibleProvider:
             ],
         }
         response = await self._client.post("/chat/completions", json=payload)
+
+        # Neuere Modelle lehnen "max_tokens" ab und erwarten
+        # "max_completion_tokens". Einmal umstellen und merken.
+        if response.status_code == 400 and self._token_field == "max_tokens":
+            detail = response.text
+            if "max_completion_tokens" in detail or "max_tokens" in detail:
+                logger.info("Modell erwartet max_completion_tokens - stelle um.")
+                self._token_field = "max_completion_tokens"
+                payload.pop("max_tokens", None)
+                payload["max_completion_tokens"] = request.max_tokens
+                response = await self._client.post("/chat/completions", json=payload)
+
         if response.status_code >= 400:
             raise AIError(
                 f"KI-Anbieter antwortete mit {response.status_code}: "

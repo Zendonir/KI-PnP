@@ -109,11 +109,11 @@ Danach erreichbar unter <http://localhost:8080>.
 Damit Mitspieler per QR-Code beitreten können, muss `PUBLIC_BASE_URL` auf eine
 im Netz erreichbare Adresse zeigen, z. B. `http://192.168.1.50:8080`.
 
-Optionale Profile:
+Der Medien-Worker für die Sprachausgabe startet mit. Optional lässt sich ein
+lokales Sprachmodell dazuschalten:
 
 ```bash
 docker compose --profile local-ai up -d    # lokales Modell über Ollama
-docker compose --profile worker up -d      # Worker für Sprachausgabe
 ```
 
 ### Auf TrueNAS SCALE
@@ -148,12 +148,50 @@ wichtigsten:
 | Variable | Bedeutung |
 |---|---|
 | `AI_PROVIDER` | `mock` (offline), `anthropic`, `openai`, `ollama` |
-| `AI_MODEL` | Modellbezeichner, Vorgabe `claude-opus-5` |
+| `AI_MODEL` | Modellbezeichner — muss zum Anbieter passen, bei `openai` z. B. `gpt-4o` |
 | `AI_EFFORT` | Denktiefe: `low` … `max` |
 | `TTS_PROVIDER` | `browser` (im Browser gesprochen), `none`, `openai` |
+| `TTS_BASE_URL` | Schnittstelle der Sprachausgabe; für ein lokales Modell hierhin zeigen |
+| `TTS_MODEL`, `TTS_VOICE` | z. B. `gpt-4o-mini-tts` und `onyx` |
+| `TTS_API_KEY` | leer lassen, dann gilt `OPENAI_API_KEY` |
+| `AUDIO_KEEP_LAST` | wie viele Aufnahmen je Runde ihre Daten behalten |
 | `PUBLIC_BASE_URL` | Basis für Beitrittslinks und QR-Codes |
 | `JWT_SECRET` | Signatur der Spieler-Token — unbedingt ändern |
 | `SITE_ADDRESS` | Domain für automatisches HTTPS via Caddy |
+
+### Sprachausgabe
+
+Zwei Wege stehen zur Wahl, umschaltbar über `TTS_PROVIDER`:
+
+- **`browser`** (Vorgabe) — das Gerät liest die Erzählung mit der eigenen
+  Stimme vor. Kostet nichts, klingt aber je nach Gerät sehr unterschiedlich.
+- **`openai`** — der Server erzeugt eine Aufnahme. Diese Einstellung gilt
+  auch für **lokale Modelle**: jeder OpenAI-kompatible Dienst mit dem
+  Endpunkt `/audio/speech` genügt, etwa ein selbst betriebener auf demselben
+  TrueNAS. Dann `TTS_BASE_URL` auf ihn richten (z. B.
+  `http://kokoro:8880/v1`); ein Schlüssel wird nicht verlangt.
+
+Die Vertonung läuft nebenher: das Backend legt einen Auftrag an, der
+Medien-Worker holt ihn ab, speichert die Aufnahme in der Datenbank und meldet
+sie per WebSocket. Der Zug wartet nie darauf — bleibt die Stimme aus, geht
+das Spiel trotzdem weiter.
+
+**Wer hört?** Am Tisch soll genau ein Gerät sprechen, sonst hallt die
+Erzählung mehrfach versetzt durch den Raum. Voreingestellt ist das Gerät der
+Spielleitung; die Rundeneinstellung `audio_playback` erlaubt `host` (Vorgabe),
+`all` oder `none`. Jedes Gerät kann sich über den Schalter *Ton hier* selbst
+stumm schalten oder die Ausgabe übernehmen.
+
+**Auf dem iPhone** erlaubt Safari Ton erst nach einer Berührung. Solange die
+Wiedergabe nicht freigegeben ist, heißt der Schalter *Freischalten*; ein
+Antippen gibt den Ton frei und holt eine bereits wartende Aufnahme nach. Ab
+dann spielt jede weitere von selbst und der Schalter zeigt *Ton hier*, womit
+sich das Gerät wieder stumm schalten lässt.
+
+Scheitert die Vertonung — kein Schlüssel, kein Guthaben, Dienst nicht
+erreichbar —, liest das Gerät die Erzählung mit seiner eigenen Stimme vor.
+Still bleibt es nur, wenn die Runde ohne Sprachausgabe angelegt wurde
+(`tts_enabled: false`) oder `TTS_PROVIDER=none` gesetzt ist.
 
 ## Bedienung
 

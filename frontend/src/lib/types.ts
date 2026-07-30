@@ -16,6 +16,8 @@ export interface GameSettings {
   language: string;
   tts_enabled: boolean;
   audio_targets: string[];
+  /** host: nur das Gerät der Spielleitung gibt Ton aus. */
+  audio_playback: "host" | "all" | "none";
   ai_provider?: string | null;
   ai_model?: string | null;
   debug_mode?: boolean;
@@ -168,6 +170,9 @@ export interface AudioJob {
   url: string | null;
   text: string;
   voice: string;
+  mime_type: string | null;
+  narration_id: string | null;
+  error: string | null;
 }
 
 export interface Summary {

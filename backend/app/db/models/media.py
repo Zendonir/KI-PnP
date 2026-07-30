@@ -34,6 +34,17 @@ class AudioJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     meta: Mapped[dict[str, Any]] = mapped_column(default=dict)
 
+    data: Mapped[bytes | None] = mapped_column(sa.LargeBinary, nullable=True)
+    """Serverseitig erzeugte Aufnahme. Wird nach einer konfigurierbaren Zahl
+    neuerer Aufnahmen freigegeben; der Auftrag selbst bleibt als Protokoll."""
+
+    mime_type: Mapped[str | None] = mapped_column(sa.String(60), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(sa.Integer, default=0)
+
+    @property
+    def has_audio(self) -> bool:
+        return self.data is not None and len(self.data) > 0
+
 
 class Image(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Generiertes Bild zu einer Szene, einem NSC oder einem Gegenstand."""
