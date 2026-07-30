@@ -104,8 +104,11 @@ export const api = {
     payload: { kind: string; text: string; target_ref?: string; payload?: Record<string, unknown> },
   ) => request<unknown>(`/games/${gameId}/actions`, { method: "POST", body: payload, token }),
 
-  resolveTurn: (gameId: string, token: string) =>
-    request<unknown>(`/games/${gameId}/resolve`, { method: "POST", token }),
+  resolveTurn: (gameId: string, token: string, turnId?: string) =>
+    request<unknown>(
+      `/games/${gameId}/resolve${turnId ? `?turn_id=${turnId}` : ""}`,
+      { method: "POST", token },
+    ),
 
   renarrate: (gameId: string, token: string) =>
     request<unknown>(`/games/${gameId}/renarrate`, { method: "POST", token }),

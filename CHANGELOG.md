@@ -37,6 +37,12 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 - Ältere Aufnahmen einer Runde geben ihre Daten wieder frei
   (`AUDIO_KEEP_LAST`); der Auftrag bleibt als Protokolleintrag erhalten.
 
+- Getrennte Gruppen: Charaktere an unterschiedlichen Orten warten nicht mehr
+  aufeinander. Jeder Ort bekommt seinen eigenen Zug, der unabhängig
+  aufläuft; ein Charakter, der an einen Ort mit laufender Szene zieht, ist
+  automatisch Teil davon. Bleibt die Gruppe zusammen, ändert sich nichts.
+  Die Spielleitung sieht im Reiter *Verlauf* eine Übersicht aller
+  gleichzeitig laufenden Orte und kann jeden gezielt auflösen.
 - Versionsanzeige: `/api/health` nennt jetzt `version` und `git_sha`, die
   Startseite zeigt beides klein im Fußbereich. Damit lässt sich einem
   gezogenen `:latest`-Image ansehen, ob es tatsächlich einen neuen Stand
@@ -47,6 +53,11 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Geändert
 
+- Ereigniszähler (`event_seq`) und Zugzähler (`current_turn_number`) werden
+  jetzt atomar in der Datenbank erhöht statt in Python gelesen und
+  zurückgeschrieben. Nötig, seit mehrere Züge desselben Spiels gleichzeitig
+  auflösen können (getrennte Gruppen) — sonst hätten zwei gleichzeitige
+  Auflösungen dieselbe Nummer vergeben können.
 - Der Medien-Worker wartet jetzt auch auf das Backend (nicht nur auf die
   Datenbank), bevor er startet. Sonst kann er nach einem Update kurzzeitig
   Spalten abfragen, die das Backend erst beim Einspielen der Migrationen

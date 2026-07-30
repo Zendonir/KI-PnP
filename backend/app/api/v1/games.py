@@ -91,8 +91,21 @@ async def qr_code(code: str, games: GameServiceDep, settings: SettingsDep) -> Re
 
 
 @router.get("/{game_id}/state", response_model=GameStateOut)
-async def get_state(principal: PrincipalDep, games: GameServiceDep) -> GameStateOut:
-    """Vollstaendiger, fuer diesen Spieler gefilterter Spielzustand."""
+async def get_state(
+    principal: PrincipalDep, games: GameServiceDep, turns: TurnServiceDep
+) -> GameStateOut:
+    """Vollstaendiger, fuer diesen Spieler gefilterter Spielzustand.
+
+    Findet sich am Ort des eigenen Charakters noch kein laufender Zug --
+    etwa direkt nachdem die Gruppe sich getrennt hat --, wird er hier schon
+    angelegt. Sonst saehe der Spieler dort keine Handlungsmoeglichkeit, bis
+    zufaellig jemand anders zuerst etwas einreicht.
+    """
+    turn = await games.current_turn_for_player(principal.game, principal.player)
+    if turn is None:
+        character = await games.character_of(principal.player)
+        if character is not None:
+            await turns.ensure_turn_for_character(principal.game, character)
     return await games.build_state(principal.game, principal.player)
 
 

@@ -36,6 +36,30 @@ SUMMARY_CREATED = "summary.created"
 AUDIO_READY = "audio.ready"
 
 
+async def increment_game_counter(
+    session: AsyncSession, game: Game, column: sa.orm.attributes.InstrumentedAttribute[int]
+) -> int:
+    """Erhoeht eine Zaehlspalte auf der Spielzeile atomar und gibt sie zurueck.
+
+    Ein SQL-UPDATE mit RETURNING statt eines Python-seitigen ``+= 1``: sicher
+    auch unter echter Nebenlaeufigkeit, weil zwischen Lesen und Schreiben
+    keine Luecke entsteht, in die eine zweite, gleichzeitige Transaktion
+    greifen koennte -- auf jeder Datenbank, nicht nur mit Zeilensperren
+    (die SQLite ohnehin nicht kennt). Noetig, seit mehrere Zuege desselben
+    Spiels gleichzeitig aufloesen koennen: event_seq und current_turn_number
+    duerfen dabei nie kollidieren.
+    """
+    result = await session.execute(
+        sa.update(Game)
+        .where(Game.id == game.id)
+        .values(**{column.key: column + 1})
+        .returning(column)
+    )
+    value = result.scalar_one()
+    setattr(game, column.key, value)
+    return value
+
+
 @dataclass(slots=True)
 class RecordedEvent:
     """Ein geschriebenes Ereignis inklusive Sequenznummer."""
@@ -85,8 +109,7 @@ class EventRecorder:
         counts_towards_summary: bool = True,
     ) -> RecordedEvent:
         """Haengt ein Ereignis an das Protokoll an."""
-        game.event_seq += 1
-        seq = game.event_seq
+        seq = await increment_game_counter(self._session, game, Game.event_seq)
         if counts_towards_summary:
             game.events_since_summary += 1
 

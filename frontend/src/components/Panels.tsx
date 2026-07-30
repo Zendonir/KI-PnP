@@ -1,6 +1,7 @@
 /** Ansichten fuer Charakter, Inventar, Quests, Gruppe und Welt. */
 
 import type {
+  ActiveLocationTurn,
   Character,
   Fact,
   GameEvent,
@@ -9,7 +10,7 @@ import type {
   WorldEntity,
   WorldLocation,
 } from "../lib/types";
-import { Badge, Card, StatBar } from "./ui";
+import { Badge, Button, Card, StatBar } from "./ui";
 
 const PRIMARY_STATS = ["hp", "mana", "stamina"];
 
@@ -325,6 +326,54 @@ export function WorldPanel({
         )}
       </Card>
     </div>
+  );
+}
+
+/** Uebersicht ueber alle gleichzeitig laufenden Orte -- nur fuer die Spielleitung.
+ *
+ * Zeigt sich nur, wenn sich die Gruppe tatsaechlich getrennt hat -- bei
+ * einem einzelnen Ort waere die Karte nur eine Wiederholung dessen, was
+ * ohnehin schon in der Kopfzeile steht.
+ */
+export function LocationOverviewPanel({
+  turns,
+  busy,
+  onResolve,
+}: {
+  turns: ActiveLocationTurn[];
+  busy: boolean;
+  onResolve: (turnId: string) => void;
+}) {
+  if (turns.length < 2) return null;
+
+  return (
+    <Card title="Getrennte Gruppe">
+      <ol className="space-y-2 text-sm">
+        {turns.map((turn) => (
+          <li
+            key={turn.turn_id}
+            className="flex items-center justify-between gap-2 rounded-lg bg-ink-900/50 px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-parchment">
+                {turn.location_name ?? "Unbekannter Ort"}
+              </p>
+              <p className="truncate text-xs text-parchment/50">
+                {turn.character_names.join(", ") || "niemand dort"} ·{" "}
+                {turn.submitted_count}/{turn.participant_count} bereit
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              disabled={busy || turn.status !== "collecting"}
+              onClick={() => onResolve(turn.turn_id)}
+            >
+              Aufloesen
+            </Button>
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 

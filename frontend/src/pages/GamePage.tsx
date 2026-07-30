@@ -8,6 +8,7 @@ import { AudioControls } from "../components/AudioControls";
 import {
   CharacterSheet,
   InventoryPanel,
+  LocationOverviewPanel,
   LogPanel,
   PartyPanel,
   QuestPanel,
@@ -98,7 +99,8 @@ function StatusBar({ state, connected }: { state: GameState; connected: boolean 
       <div className="min-w-0">
         <p className="truncate text-sm font-semibold text-parchment">{state.game.name}</p>
         <p className="truncate text-xs text-parchment/50">
-          Code {state.game.code} · Zug {state.game.current_turn_number} ·{" "}
+          Code {state.game.code} · Zug{" "}
+          {state.turn?.number ?? state.game.current_turn_number} ·{" "}
           {state.turn?.scene_title || state.game.status}
         </p>
       </div>
@@ -483,6 +485,15 @@ function TableView({
                 )}
               </Card>
             )}
+            {state.is_host && state.active_location_turns && (
+              <LocationOverviewPanel
+                turns={state.active_location_turns}
+                busy={busy}
+                onResolve={(turnId) =>
+                  void run(() => api.resolveTurn(state.game.id, token, turnId))
+                }
+              />
+            )}
           </>
         )}
       </div>
@@ -491,7 +502,7 @@ function TableView({
         <div className="max-h-[48dvh] shrink-0 overflow-y-auto border-t border-ink-700 bg-ink-900/95 px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-xs text-parchment/50">
             <span>
-              Zug {state.game.current_turn_number}
+              Zug {state.turn?.number ?? state.game.current_turn_number}
               {state.turn ? ` · ${state.turn.submitted_player_ids.length} bereit` : ""}
             </span>
             {paused && <Badge tone="warn">pausiert</Badge>}

@@ -94,8 +94,22 @@ export interface Turn {
   number: number;
   status: "collecting" | "resolving" | "completed";
   scene_title: string;
+  location_id: string | null;
+  location_name: string | null;
   submitted_player_ids: string[];
   my_suggestions: Suggestion[];
+}
+
+/** Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung. */
+export interface ActiveLocationTurn {
+  turn_id: string;
+  turn_number: number;
+  status: "collecting" | "resolving" | "completed";
+  location_id: string | null;
+  location_name: string | null;
+  character_names: string[];
+  submitted_count: number;
+  participant_count: number;
 }
 
 export interface Narration {
@@ -200,6 +214,7 @@ export interface GameState {
   events: GameEvent[];
   audio: AudioJob | null;
   is_host: boolean;
+  active_location_turns: ActiveLocationTurn[] | null;
 }
 
 export interface RealtimeMessage {

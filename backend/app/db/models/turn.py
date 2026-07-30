@@ -20,7 +20,22 @@ class Turn(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Eine Spielrunde (ein Zug aller Spieler)."""
 
     __tablename__ = "turns"
-    __table_args__ = (sa.UniqueConstraint("game_id", "number", name="uq_turns_game_number"),)
+    __table_args__ = (
+        sa.UniqueConstraint("game_id", "number", name="uq_turns_game_number"),
+        # Hoechstens ein laufender Zug je Ort -- mehrere gleichzeitig
+        # "collecting" Zuege pro Spiel sind erlaubt, aber nie zwei am
+        # selben Ort (Split-Party). Partieller Index statt einer
+        # gewoehnlichen Unique-Constraint, weil abgeschlossene Zuege am
+        # selben Ort sich sonst gegenseitig blockieren wuerden.
+        sa.Index(
+            "uq_turns_one_collecting_per_location",
+            "game_id",
+            "location_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'collecting'"),
+            postgresql_where=sa.text("status = 'collecting'"),
+        ),
+    )
 
     game_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("games.id", ondelete="CASCADE"), index=True

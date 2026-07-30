@@ -199,8 +199,23 @@ class TurnOut(Schema):
     number: int
     status: str
     scene_title: str
+    location_id: uuid.UUID | None = None
+    location_name: str | None = None
     submitted_player_ids: list[uuid.UUID] = Field(default_factory=list)
     my_suggestions: list[SuggestionOut] = Field(default_factory=list)
+
+
+class ActiveLocationTurnOut(Schema):
+    """Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung."""
+
+    turn_id: uuid.UUID
+    turn_number: int
+    status: str
+    location_id: uuid.UUID | None = None
+    location_name: str | None = None
+    character_names: list[str] = Field(default_factory=list)
+    submitted_count: int = 0
+    participant_count: int = 0
 
 
 class EventOut(Schema):
@@ -284,6 +299,9 @@ class GameStateOut(Schema):
     events: list[EventOut]
     audio: AudioOut | None
     is_host: bool
+    active_location_turns: list[ActiveLocationTurnOut] | None = None
+    """Uebersicht ueber alle gleichzeitig laufenden Orte -- nur fuer die
+    Spielleitung befuellt, sonst None."""
 
 
 # --- Administration -----------------------------------------------------

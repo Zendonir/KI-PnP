@@ -47,7 +47,7 @@ from app.realtime.hub import EventHub
 from app.schemas.api import ActionSubmitRequest
 from app.services import events as ev
 from app.services.context import ContextBuilder
-from app.services.events import EventRecorder
+from app.services.events import EventRecorder, increment_game_counter
 from app.services.state_changes import StateChangeApplier
 from app.services.views import character_to_domain
 from app.tts.providers import SpeechRequest, TTSProvider
@@ -74,10 +74,113 @@ class TurnService:
         self._hub = hub
         self._recorder = recorder
 
+    # -- Nebenlaeufigkeit --------------------------------------------------
+
+    async def _lock_game(self, game: Game) -> Game:
+        """Sperrt die Spielzeile fuer die Dauer der Transaktion.
+
+        Sobald mehrere Orte gleichzeitig einen Zug abschliessen koennen,
+        wuerden parallele Anfragen sonst auf denselben event_seq/
+        current_turn_number-Stand lesen und sich beim Schreiben ueberholen.
+        Auf Postgres ein echter FOR-UPDATE-Zeilenlock; auf SQLite (Tests) ein
+        wirkungsloses No-Op, weil SQLite Schreiber ohnehin serialisiert.
+        populate_existing sorgt dafuer, dass das schon geladene Game-Objekt
+        den aktuellsten committeten Stand traegt, bevor +=1 darauf arbeitet.
+        """
+        locked = await self._session.get(
+            Game, game.id, with_for_update=True, populate_existing=True
+        )
+        assert locked is not None
+        return locked
+
+    async def _sync_location_turns(
+        self, game: Game, character_ids: list[Any], *, carry_scene_title: str
+    ) -> list[tuple[Turn, bool]]:
+        """Holt oder legt pro vertretenem Ort genau einen laufenden Zug an.
+
+        Das ist zugleich der gesamte Mechanismus fuer automatisches Einreihen
+        und Wiedervereinigen: existiert am Zielort schon ein Zug, wird er
+        wiederverwendet -- unabhaengig davon, ob der Charakter gerade zum
+        ersten Mal dort ankommt oder die Gruppe sich dort wieder trifft. Das
+        zweite Element pro Eintrag sagt, ob der Zug dabei neu angelegt wurde
+        (nur dafuer lohnt ein turn.started-Event -- ein wiederverwendeter Zug
+        kuendigt sich bereits durch das state.changed-Ereignis des Umzugs an).
+        Muss innerhalb einer per _lock_game gesicherten Transaktion laufen.
+        """
+        if not character_ids:
+            return []
+
+        stmt = sa.select(Character.location_id).where(
+            Character.id.in_(character_ids), Character.is_alive.is_(True)
+        )
+        location_ids = set((await self._session.execute(stmt)).scalars().all())
+
+        results: list[tuple[Turn, bool]] = []
+        for location_id in location_ids:
+            existing_stmt = sa.select(Turn).where(
+                Turn.game_id == game.id,
+                Turn.status == "collecting",
+                Turn.location_id.is_(None) if location_id is None
+                else Turn.location_id == location_id,
+            )
+            existing = (await self._session.execute(existing_stmt)).scalars().first()
+            if existing is not None:
+                results.append((existing, False))
+                continue
+
+            number = await increment_game_counter(self._session, game, Game.current_turn_number)
+            turn = Turn(
+                game_id=game.id,
+                number=number,
+                status="collecting",
+                scene_title=carry_scene_title,
+                location_id=location_id,
+            )
+            self._session.add(turn)
+            results.append((turn, True))
+        await self._session.flush()
+        return results
+
+    async def ensure_turn_for_character(
+        self, game: Game, character: Character
+    ) -> Turn | None:
+        """Holt oder legt den Zug an, der zum Ort dieses Charakters passt.
+
+        Absicherung fuer den seltenen Fall, dass ein Charakter (etwa ein
+        spaeter Beitritt mitten im Spiel) an einem Ort steht, fuer den noch
+        kein laufender Zug existiert -- im Regelbetrieb bekommt das jeder Ort
+        bereits proaktiv bei der vorigen Rundenaufloesung
+        (_sync_location_turns), dieser Weg greift nur, wenn das ausnahmsweise
+        nicht der Fall war. Ein toter Charakter braucht keinen Zug.
+        """
+        if not character.is_alive:
+            return None
+        game = await self._lock_game(game)
+        synced = await self._sync_location_turns(
+            game, [character.id], carry_scene_title=""
+        )
+        if not synced:
+            return None
+        turn, created = synced[0]
+        if created:
+            await self._session.commit()
+            await self._recorder.flush_to_clients(game.id)
+            await self._hub.publish(
+                game.id,
+                "turn.started",
+                {
+                    "turn_number": turn.number,
+                    "turn_id": str(turn.id),
+                    "location_id": str(turn.location_id) if turn.location_id else None,
+                },
+            )
+        return turn
+
     # -- Weltgenerierung -------------------------------------------------
 
     async def bootstrap_world(self, game: Game) -> Turn:
         """Erzeugt Welt, Einleitung und die erste Runde."""
+        game = await self._lock_game(game)
         builder = ContextBuilder(self._session, game, self._settings)
         context = await builder.build_world_context()
         response = await self._ask(
@@ -88,17 +191,25 @@ class TurnService:
         )
 
         game.status = "active"
-        game.current_turn_number = 1
-        turn = Turn(
+        # Zaehler startet bei 0: die Nummer 1 gehoert dem ersten wirklich
+        # bespielbaren Zug, den _sync_location_turns unten vergibt -- der
+        # Traeger-Zug hier ist reine Buchfuehrung und soll die Zaehlung
+        # nicht verschieben.
+        game.current_turn_number = 0
+        # Traeger-Zug: haelt Ereignisse und Aenderungen der Weltentstehung
+        # fest, bevor feststeht, wo die Charaktere am Ende landen. Er wird
+        # nie von Spielern bespielt und ist unten sofort abgeschlossen --
+        # dasselbe Muster wie am Ende jedes gewoehnlichen Zugs.
+        origin = Turn(
             game_id=game.id,
-            number=1,
+            number=0,
             status="collecting",
             scene_title=response.scene_title or "Auftakt",
         )
-        self._session.add(turn)
+        self._session.add(origin)
         await self._session.flush()
 
-        applier = StateChangeApplier(self._session, game, self._recorder, turn_id=turn.id)
+        applier = StateChangeApplier(self._session, game, self._recorder, turn_id=origin.id)
         application = await applier.apply_raw(response.changes, source="ai")
 
         await self._recorder.record(
@@ -110,14 +221,56 @@ class TurnService:
                 "accepted_changes": application.accepted_count,
                 "rejected_changes": application.rejected_count,
             },
-            turn_id=turn.id,
+            turn_id=origin.id,
         )
-        await self._persist_narration(game, turn, response)
-        await self._align_turn_location(game, turn)
+        origin.status = "completed"
+        origin.resolved_at = utcnow()
+
+        character_ids = list(
+            (
+                await self._session.execute(
+                    sa.select(Character.id).where(
+                        Character.game_id == game.id, Character.is_alive.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        synced = await self._sync_location_turns(
+            game, character_ids, carry_scene_title=origin.scene_title
+        )
+        if not synced:
+            # Kein Charakter wurde platziert (oder es gibt noch keinen) --
+            # ohne einen Ort zum Anknuepfen bleibt der Traeger-Zug der
+            # einzige Ansprechpartner und wird selbst zum ersten Zug.
+            game.current_turn_number = 1
+            origin.number = 1
+            origin.status = "collecting"
+            origin.resolved_at = None
+            synced = [(origin, True)]
+
+        primary, _ = synced[0]
+        await self._persist_narration(game, primary, response)
+        for other, _ in synced[1:]:
+            other.scene_title = response.scene_title or other.scene_title
+
         await self._session.commit()
         await self._recorder.flush_to_clients(game.id)
-        await self._hub.publish(game.id, "turn.started", {"turn_number": turn.number})
-        return turn
+        for started, created in synced:
+            if created:
+                await self._hub.publish(
+                    game.id,
+                    "turn.started",
+                    {
+                        "turn_number": started.number,
+                        "turn_id": str(started.id),
+                        "location_id": (
+                            str(started.location_id) if started.location_id else None
+                        ),
+                    },
+                )
+        return primary
 
     # -- Handlungen ------------------------------------------------------
 
@@ -178,8 +331,18 @@ class TurnService:
         )
         return set((await self._session.execute(stmt)).scalars().all())
 
-    async def everyone_submitted(self, game: Game, turn: Turn) -> bool:
-        """Prueft, ob alle handlungsfaehigen Spieler eingereicht haben."""
+    async def turn_ready(self, game: Game, turn: Turn) -> bool:
+        """Prueft, ob alle handlungsfaehigen Spieler an diesem Ort eingereicht haben.
+
+        Nur Spieler, deren Charakter sich gerade am Ort dieses Zugs
+        befindet, zaehlen -- das ist der Mechanismus, der eine Aufteilung
+        der Gruppe ueberhaupt erst unabhaengig aufloesen laesst.
+        """
+        location_filter = (
+            Character.location_id.is_(None)
+            if turn.location_id is None
+            else Character.location_id == turn.location_id
+        )
         stmt = (
             sa.select(Player.id)
             .join(Character, Character.player_id == Player.id)
@@ -187,6 +350,7 @@ class TurnService:
                 Player.game_id == game.id,
                 Player.is_active.is_(True),
                 Character.is_alive.is_(True),
+                location_filter,
             )
         )
         expected = set((await self._session.execute(stmt)).scalars().all())
@@ -211,6 +375,7 @@ class TurnService:
 
     async def _resolve_mechanics(self, game: Game, turn: Turn) -> list[dict[str, Any]]:
         """Phase A: Regelpruefung, Kosten und Wuerfe."""
+        game = await self._lock_game(game)
         turn.status = "resolving"
         settings = game.settings
         ruleset = get_ruleset(settings.ruleset if settings else "classic")
@@ -355,6 +520,35 @@ class TurnService:
         self, game: Game, turn: Turn, results: list[dict[str, Any]]
     ) -> Turn:
         """Phase B: KI erzaehlt, Backend validiert die Vorschlaege."""
+        game = await self._lock_game(game)
+
+        # Wer zu diesem Zug gehoerte, bevor die KI etwas veraendert hat --
+        # nicht nur, wer tatsaechlich eine Handlung eingereicht hat. Bei
+        # einem von der Spielleitung erzwungenen Aufloesen (/resolve,
+        # /skip) kann das auch niemand oder nur ein Teil der Gruppe sein;
+        # trotzdem braucht jeder von ihnen anschliessend einen Folgezug.
+        location_filter = (
+            Character.location_id.is_(None)
+            if turn.location_id is None
+            else Character.location_id == turn.location_id
+        )
+        character_ids_before = list(
+            (
+                await self._session.execute(
+                    sa.select(Character.id)
+                    .join(Player, Player.id == Character.player_id)
+                    .where(
+                        Character.game_id == game.id,
+                        Character.is_alive.is_(True),
+                        Player.is_active.is_(True),
+                        location_filter,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
         builder = ContextBuilder(self._session, game, self._settings)
         context = await builder.build_turn_context(turn, action_results=results)
         response = await self._ask(
@@ -382,26 +576,65 @@ class TurnService:
             counts_towards_summary=False,
         )
 
-        game.current_turn_number += 1
-        next_turn = Turn(
-            game_id=game.id,
-            number=game.current_turn_number,
-            status="collecting",
-            scene_title=response.scene_title or turn.scene_title,
+        # Wer an diesem Zug beteiligt war, bestimmt die Folgezuege. Im
+        # Regelfall bleibt die Gruppe an einem Ort -- ein Folgezug, wie
+        # bisher. Sind Charaktere durch character.move auseinandergegangen,
+        # bekommt jeder neue Ort seinen eigenen; ist am Zielort schon eine
+        # Szene im Gang, reiht sich der Ankommende dort automatisch ein.
+        # Tote (z. B. durch diesen Zug gestorbene) Charaktere fallen hier
+        # automatisch heraus -- _sync_location_turns filtert selbst nochmal
+        # auf is_alive, das Herausfiltern hier dient nur der Vollstaendigkeit.
+        character_ids = list(
+            (
+                await self._session.execute(
+                    sa.select(Character.id).where(
+                        Character.id.in_(character_ids_before), Character.is_alive.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
         )
-        self._session.add(next_turn)
-        await self._session.flush()
+        synced = await self._sync_location_turns(
+            game, character_ids, carry_scene_title=response.scene_title or turn.scene_title
+        )
+        if not synced:
+            # Niemand aus diesem Zug ist noch handlungsfaehig (z. B. alle
+            # gestorben) -- die Erzaehlung bleibt am abgeschlossenen Zug.
+            synced = [(turn, False)]
 
-        await self._persist_narration(game, next_turn, response)
-        await self._align_turn_location(game, next_turn)
+        # Die Erzaehlung der KI ist ein einzelner Text fuer den ganzen
+        # abgeschlossenen Zug; sie gehoert an den Folgezug am urspruenglichen
+        # Ort (oder an den ersten neuen, falls die Gruppe komplett
+        # weitergezogen ist). Andere neu entstandene Orte bekommen zunaechst
+        # nur den Szenentitel -- ihre eigene Erzaehlung entsteht, sobald dort
+        # der naechste Zug aufgeloest wird.
+        primary, _ = next(
+            ((t, c) for t, c in synced if t.location_id == turn.location_id), synced[0]
+        )
+        await self._persist_narration(game, primary, response)
+        for other, _ in synced:
+            if other.id != primary.id:
+                other.scene_title = response.scene_title or other.scene_title
+
         await self._session.commit()
         await self._recorder.flush_to_clients(game.id)
-        await self._hub.publish(
-            game.id, "turn.started", {"turn_number": next_turn.number}
-        )
+        for started, created in synced:
+            if created:
+                await self._hub.publish(
+                    game.id,
+                    "turn.started",
+                    {
+                        "turn_number": started.number,
+                        "turn_id": str(started.id),
+                        "location_id": (
+                            str(started.location_id) if started.location_id else None
+                        ),
+                    },
+                )
 
         await self._maybe_summarize(game)
-        return next_turn
+        return primary
 
     async def _results_from_actions(self, turn: Turn) -> list[dict[str, Any]]:
         """Rekonstruiert die Ergebnisse eines bereits gewuerfelten Zuges."""
@@ -658,13 +891,3 @@ class TurnService:
         )
         return (await self._session.execute(stmt)).scalars().first()
 
-    async def _align_turn_location(self, game: Game, turn: Turn) -> None:
-        """Uebernimmt den Aufenthaltsort der Gruppe in die Runde."""
-        stmt = (
-            sa.select(Character.location_id)
-            .where(Character.game_id == game.id, Character.location_id.isnot(None))
-            .limit(1)
-        )
-        location_id = (await self._session.execute(stmt)).scalars().first()
-        if location_id is not None:
-            turn.location_id = location_id

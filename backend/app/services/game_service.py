@@ -29,6 +29,7 @@ from app.db.models import (
 )
 from app.realtime.hub import EventHub
 from app.schemas.api import (
+    ActiveLocationTurnOut,
     AudioOut,
     DiceRollOut,
     EntityOut,
@@ -188,6 +189,25 @@ class GameService:
         )
         return (await self._session.execute(stmt)).scalars().first()
 
+    async def current_turn_for_player(self, game: Game, player: Player) -> Turn | None:
+        """Der laufende Zug am Ort des Charakters dieses Spielers.
+
+        Bleibt die Gruppe zusammen, ist das fuer alle derselbe Zug wie
+        heute. Trennt sie sich, bekommt jeder Ort seinen eigenen -- dieser
+        hier ist der, den *dieser* Spieler gerade bespielt.
+        """
+        character = await self.character_of(player)
+        if character is None:
+            return None
+        stmt = sa.select(Turn).where(
+            Turn.game_id == game.id,
+            Turn.status == "collecting",
+            Turn.location_id.is_(None)
+            if character.location_id is None
+            else Turn.location_id == character.location_id,
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
     async def character_of(self, player: Player) -> Character | None:
         stmt = sa.select(Character).where(Character.player_id == player.id)
         return (await self._session.execute(stmt)).scalars().first()
@@ -221,16 +241,31 @@ class GameService:
         my_character = next(
             (item for item in characters if item.player_id == player.id), None
         )
-        turn = await self.current_turn(game)
+        turn = await self.current_turn_for_player(game, player)
+
+        # Oeffentliche Narration nur vom eigenen Ort -- sonst laese man die
+        # Erzaehlung einer unabhaengig laufenden Szene an einem anderen Ort
+        # mit. Private Hinweise (audience_player_id) bleiben davon unberuehrt.
+        # Ohne eigenen Charakter (z. B. vor dem Anlegen) gilt kein Ortsfilter.
+        if my_character is not None and my_character.location_id is not None:
+            same_location = Turn.location_id == my_character.location_id
+        elif my_character is not None:
+            same_location = Turn.location_id.is_(None)
+        else:
+            same_location = sa.true()
 
         narrations = list(
             (
                 await self._session.execute(
                     sa.select(Narration)
+                    .outerjoin(Turn, Turn.id == Narration.turn_id)
                     .where(
                         Narration.game_id == game.id,
                         sa.or_(
-                            Narration.kind == "public",
+                            sa.and_(
+                                Narration.kind == "public",
+                                sa.or_(Turn.id.is_(None), same_location),
+                            ),
                             Narration.audience_player_id == player.id,
                         ),
                     )
@@ -343,14 +378,24 @@ class GameService:
                 .scalars()
                 .all()
             )
+            turn_location_name = None
+            if turn.location_id is not None:
+                turn_location = await self._session.get(Location, turn.location_id)
+                turn_location_name = turn_location.name if turn_location else None
             turn_out = TurnOut(
                 id=turn.id,
                 number=turn.number,
                 status=turn.status,
                 scene_title=turn.scene_title,
+                location_id=turn.location_id,
+                location_name=turn_location_name,
                 submitted_player_ids=submitted,
                 my_suggestions=suggestions,
             )
+
+        active_location_turns = (
+            await self._active_location_turns(game) if player.role == "host" else None
+        )
 
         return GameStateOut(
             game=GameOut.model_validate(game),
@@ -393,7 +438,82 @@ class GameService:
             events=[EventOut.model_validate(item) for item in visible_events],
             audio=AudioOut.model_validate(audio) if audio else None,
             is_host=player.role == "host",
+            active_location_turns=active_location_turns,
         )
+
+    async def _active_location_turns(self, game: Game) -> list[ActiveLocationTurnOut]:
+        """Uebersicht ueber alle gleichzeitig laufenden Orte -- Spielleitung.
+
+        Zeigt Kennzahlen je Ort, keinen vollen Erzaehltext einer fremden
+        Szene (der bleibt wie bei allen anderen Spielern ortsgefiltert).
+        """
+        turns = list(
+            (
+                await self._session.execute(
+                    sa.select(Turn).where(
+                        Turn.game_id == game.id,
+                        Turn.status.in_(("collecting", "resolving")),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not turns:
+            return []
+
+        overview: list[ActiveLocationTurnOut] = []
+        for turn in turns:
+            location_filter = (
+                Character.location_id.is_(None)
+                if turn.location_id is None
+                else Character.location_id == turn.location_id
+            )
+            participants = list(
+                (
+                    await self._session.execute(
+                        sa.select(Character)
+                        .join(Player, Player.id == Character.player_id)
+                        .where(
+                            Character.game_id == game.id,
+                            Character.is_alive.is_(True),
+                            Player.is_active.is_(True),
+                            location_filter,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            submitted_count = len(
+                (
+                    await self._session.execute(
+                        sa.select(Action.player_id).where(
+                            Action.turn_id == turn.id, Action.status == "pending"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            location_name = None
+            if turn.location_id is not None:
+                location = await self._session.get(Location, turn.location_id)
+                location_name = location.name if location else None
+            overview.append(
+                ActiveLocationTurnOut(
+                    turn_id=turn.id,
+                    turn_number=turn.number,
+                    status=turn.status,
+                    location_id=turn.location_id,
+                    location_name=location_name,
+                    character_names=[item.name for item in participants],
+                    submitted_count=submitted_count,
+                    participant_count=len(participants),
+                )
+            )
+        overview.sort(key=lambda item: item.turn_number)
+        return overview
 
     async def _knowledge_for(self, game: Game, character: Character | None) -> list[str]:
         conditions = [Knowledge.subject_type == "public"]
