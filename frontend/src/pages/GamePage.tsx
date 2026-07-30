@@ -17,7 +17,7 @@ import { NarrationFeed } from "../components/NarrationFeed";
 import { Badge, Button, Card, ErrorNote, Field, Spinner, TextInput } from "../components/ui";
 import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
-import type { GameState } from "../lib/types";
+import type { GameState, RealtimeMessage } from "../lib/types";
 import { useGameState } from "../lib/useGameState";
 
 type Tab = "story" | "character" | "quests" | "world" | "log";
@@ -35,7 +35,7 @@ export function GamePage() {
   const navigate = useNavigate();
   const session = useMemo(() => loadSession(), []);
   const token = session?.gameId === gameId ? session.token : null;
-  const { state, error, connected, loading, refresh } = useGameState(gameId, token);
+  const { state, error, connected, loading, refresh, lastMessage } = useGameState(gameId, token);
 
   if (!token) {
     return (
@@ -80,7 +80,13 @@ export function GamePage() {
   return state.game.status === "lobby" ? (
     <LobbyView state={state} token={token} onChanged={refresh} connected={connected} />
   ) : (
-    <TableView state={state} token={token} onChanged={refresh} connected={connected} />
+    <TableView
+      state={state}
+      token={token}
+      onChanged={refresh}
+      connected={connected}
+      lastMessage={lastMessage}
+    />
   );
 }
 
@@ -283,11 +289,13 @@ function TableView({
   token,
   onChanged,
   connected,
+  lastMessage,
 }: {
   state: GameState;
   token: string;
   onChanged: () => Promise<void>;
   connected: boolean;
+  lastMessage: RealtimeMessage | null;
 }) {
   const [tab, setTab] = useState<Tab>("story");
   const [error, setError] = useState<string | null>(null);
@@ -333,6 +341,22 @@ function TableView({
             Die Runde ist beendet. Der Verlauf bleibt erhalten.
           </p>
         )}
+
+        {/* Die Tonausgabe bleibt immer erreichbar und scrollt nicht mit dem
+            Erzählstrang aus dem Bild. */}
+        {tab === "story" && (
+          <div className="border-b border-ink-700 bg-ink-900/95 px-4 py-2">
+            <AudioControls
+              gameId={state.game.id}
+              token={token}
+              isHost={state.is_host}
+              playback={state.game.settings.audio_playback ?? "host"}
+              audio={state.audio}
+              latest={latestNarration}
+              lastMessage={lastMessage}
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -340,7 +364,6 @@ function TableView({
 
         {tab === "story" && (
           <>
-            <AudioControls latest={latestNarration} />
             <NarrationFeed
               narrations={state.narrations}
               rolls={state.dice_rolls}

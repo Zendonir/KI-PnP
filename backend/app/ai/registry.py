@@ -28,6 +28,25 @@ def _build_anthropic(settings: Settings) -> LLMProvider:
     )
 
 
+# Vorgabe, falls das eingestellte Modell offensichtlich nicht zum Anbieter
+# passt (etwa ein Claude-Modell gegen die OpenAI-API).
+_OPENAI_DEFAULT_MODEL = "gpt-4o"
+
+
+def _model_for_openai(settings: Settings) -> str:
+    """Verhindert einen 404 mitten in der Spielrunde."""
+    model = settings.ai_model.strip()
+    if not model or model.startswith(("claude-", "anthropic")):
+        logger.warning(
+            "AI_MODEL=%r passt nicht zur OpenAI-API - nutze %r. "
+            "Bitte AI_MODEL passend setzen (z. B. gpt-4o oder gpt-4o-mini).",
+            model,
+            _OPENAI_DEFAULT_MODEL,
+        )
+        return _OPENAI_DEFAULT_MODEL
+    return model
+
+
 def _build_openai(settings: Settings) -> LLMProvider:
     from app.ai.openai_provider import OpenAICompatibleProvider
 
@@ -36,7 +55,7 @@ def _build_openai(settings: Settings) -> LLMProvider:
         return MockLLMProvider()
     return OpenAICompatibleProvider(
         api_key=settings.openai_api_key,
-        model=settings.ai_model,
+        model=_model_for_openai(settings),
         base_url=settings.openai_base_url,
         timeout=settings.ai_timeout_seconds,
     )

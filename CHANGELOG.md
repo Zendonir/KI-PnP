@@ -14,9 +14,34 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Migration und Modelle auseinanderlaufen
 - Veröffentlichung der Container-Images in der GitHub Container Registry bei
   jedem Tag `v*` sowie auf Zuruf über *Run workflow*
-- App-Definition für TrueNAS SCALE ab 24.10 unter `deploy/truenas/`
+- App-Definition für TrueNAS SCALE ab 24.10 unter `deploy/truenas/` —
+  eingerichtet auf OpenAI für Erzählung und Stimme, mit Redis, damit eine
+  fertige Aufnahme die Geräte sofort erreicht statt beim nächsten Abgleich
+- Serverseitige Sprachausgabe über die OpenAI-Schnittstelle `/audio/speech`.
+  Die Aufnahme entsteht im Medien-Worker, wird in der Datenbank abgelegt und
+  über einen abgesicherten Endpunkt ausgeliefert — die Runde wartet dabei nie
+  auf die Vertonung.
+- Lokale Sprachmodelle nutzbar: `TTS_BASE_URL` auf einen selbst betriebenen,
+  OpenAI-kompatiblen Dienst zeigen lassen (etwa auf demselben TrueNAS). Ein
+  Schlüssel ist dort nicht erforderlich.
+- Ein Gerät am Tisch gibt den Ton aus, voreingestellt das der Spielleitung.
+  Die neue Rundeneinstellung `audio_playback` (`host` | `all` | `none`) legt
+  fest, wer mithören darf.
+- Freischaltung der Wiedergabe auf iPhone und iPad: ein dauerhaft bestehendes
+  Audio-Element wird bei der ersten Berührung entsperrt, danach spielt jede
+  weitere Aufnahme von selbst.
+- Ältere Aufnahmen einer Runde geben ihre Daten wieder frei
+  (`AUDIO_KEEP_LAST`); der Auftrag bleibt als Protokolleintrag erhalten.
 
 ### Geändert
+
+- Der Medien-Worker läuft in `docker-compose.yml` nicht mehr in einem Profil,
+  sondern immer mit — ohne ihn entsteht bei serverseitiger Stimme kein Ton.
+- Die Sprachausgabe über OpenAI war bisher nur angedeutet und lieferte nie
+  eine Aufnahme; sie ist nun vollständig umgesetzt.
+- Der OpenAI-Anbieter für die Spielleiter-KI kommt auch mit Modellen zurecht,
+  die `max_completion_tokens` statt `max_tokens` verlangen, und weist auf ein
+  Modell hin, das nicht zum eingestellten Anbieter passt.
 
 - Der Frontend-Container reicht Anfragen unter `/api` nun selbst an das
   Backend weiter, einschließlich WebSocket. Damit genügt für einen

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
+
 import sqlalchemy as sa
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from app.api.deps import (
     GameServiceDep,
@@ -139,18 +141,47 @@ async def list_narrations(
     return [NarrationOut.model_validate(row) for row in rows]
 
 
+@router.get("/audio/{audio_id}", response_class=Response)
+async def get_audio(
+    audio_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
+) -> Response:
+    """Liefert eine serverseitig erzeugte Sprachaufnahme aus.
+
+    Der Zugang ist an die Runde gebunden: ohne gueltiges Spieler-Token gibt es
+    kein Audio, und Aufnahmen anderer Runden sind nicht erreichbar.
+    """
+    job = await session.get(AudioJob, audio_id)
+    if job is None or job.game_id != principal.game.id:
+        raise NotFoundError("Sprachaufnahme nicht gefunden.")
+    if not job.has_audio:
+        raise NotFoundError(
+            "Zu dieser Aufnahme liegen keine Audiodaten vor."
+            if job.status != "pending"
+            else "Die Aufnahme wird noch erzeugt."
+        )
+    return Response(
+        content=job.data,
+        media_type=job.mime_type or "audio/mpeg",
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "Content-Disposition": f'inline; filename="narration-{job.id}.mp3"',
+            "Accept-Ranges": "none",
+        },
+    )
+
+
 @router.post("/audio/replay", response_model=OkResponse)
 async def replay_audio(host: HostDep, session: SessionDep, hub: HubDep) -> OkResponse:
     """Fordert alle Clients auf, die letzte Sprachausgabe erneut abzuspielen."""
     stmt = (
         sa.select(AudioJob)
-        .where(AudioJob.game_id == host.game.id, AudioJob.target == "browser")
+        .where(AudioJob.game_id == host.game.id, AudioJob.status == "ready")
         .order_by(AudioJob.created_at.desc())
         .limit(1)
     )
     job = (await session.execute(stmt)).scalars().first()
     if job is None:
-        raise NotFoundError("Es liegt keine Sprachausgabe vor.")
+        raise NotFoundError("Es liegt keine fertige Sprachausgabe vor.")
     await hub.publish(
         host.game.id,
         "audio.replay",
@@ -160,6 +191,7 @@ async def replay_audio(host: HostDep, session: SessionDep, hub: HubDep) -> OkRes
             "voice": job.voice,
             "url": job.url,
             "provider": job.provider,
+            "mime_type": job.mime_type,
         },
     )
     return OkResponse(message="Wiedergabe angefordert.")

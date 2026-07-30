@@ -495,48 +495,67 @@ class TurnService:
     async def _create_audio_job(
         self, game: Game, narration: Narration, mood: str
     ) -> None:
-        """Legt einen Sprachausgabe-Auftrag an (ein Auftrag je Ausgabeziel)."""
+        """Legt genau einen Sprachausgabe-Auftrag zur Narration an.
+
+        Erzeugt der Server das Audio selbst, bleibt der Auftrag zunaechst
+        offen: der Medien-Worker holt ihn ab und meldet die fertige Aufnahme
+        anschliessend per WebSocket. Der Spieltisch wartet also nie auf die
+        Tonspur. Spricht dagegen das Endgeraet selbst, ist der Auftrag sofort
+        fertig und traegt nur den Text.
+        """
         settings = game.settings
         if settings is not None and not settings.tts_enabled:
             return
-        targets = list(settings.audio_targets or ["browser"]) if settings else ["browser"]
-        result = await self._tts.synthesize(
-            SpeechRequest(
-                text=narration.text, voice=self._settings.tts_voice, mood=mood
-            )
+        if settings is not None and settings.audio_playback == "none":
+            return
+
+        targets = list(settings.audio_targets or []) if settings else []
+        target = targets[0] if targets else "browser"
+
+        job = AudioJob(
+            game_id=game.id,
+            narration_id=narration.id,
+            provider=self._tts.name,
+            voice=self._settings.tts_voice,
+            target=target,
+            text=narration.text,
+            meta={"mood": mood},
         )
-        for target in targets or ["browser"]:
-            job = AudioJob(
-                game_id=game.id,
-                narration_id=narration.id,
-                provider=self._tts.name,
-                voice=self._settings.tts_voice,
-                status=result.status,
-                target=target,
-                url=result.url,
-                text=narration.text,
-                error=result.error,
-                meta=dict(result.meta or {}),
-            )
+
+        if self._tts.server_side:
+            job.status = "pending"
             self._session.add(job)
             await self._session.flush()
-            if result.status == "ready":
-                await self._recorder.record(
-                    game,
-                    type=ev.AUDIO_READY,
-                    summary="Sprachausgabe bereit.",
-                    payload={
-                        "audio_id": str(job.id),
-                        "target": target,
-                        "url": job.url,
-                        "text": job.text,
-                        "voice": job.voice,
-                        "provider": job.provider,
-                    },
-                    turn_id=narration.turn_id,
-                    actor_type="ai",
-                    counts_towards_summary=False,
-                )
+            return
+
+        result = await self._tts.synthesize(
+            SpeechRequest(text=narration.text, voice=self._settings.tts_voice, mood=mood)
+        )
+        job.status = result.status
+        job.url = result.url
+        job.error = result.error
+        job.meta = {"mood": mood, **dict(result.meta or {})}
+        self._session.add(job)
+        await self._session.flush()
+
+        if result.status == "ready":
+            await self._recorder.record(
+                game,
+                type=ev.AUDIO_READY,
+                summary="Sprachausgabe bereit.",
+                payload={
+                    "audio_id": str(job.id),
+                    "target": target,
+                    "url": job.url,
+                    "text": job.text,
+                    "voice": job.voice,
+                    "provider": job.provider,
+                    "playback": settings.audio_playback if settings else "host",
+                },
+                turn_id=narration.turn_id,
+                actor_type="ai",
+                counts_towards_summary=False,
+            )
 
     # -- Zusammenfassungen -----------------------------------------------
 

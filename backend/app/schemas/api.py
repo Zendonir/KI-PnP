@@ -29,6 +29,9 @@ class Schema(BaseModel):
 # --- Einstellungen ------------------------------------------------------
 
 
+AudioPlayback = Literal["host", "all", "none"]
+
+
 class GameSettingsIn(Schema):
     genre: Genre = "fantasy"
     world: str = Field(default="", max_length=200)
@@ -43,6 +46,8 @@ class GameSettingsIn(Schema):
     language: str = Field(default="de", max_length=10)
     tts_enabled: bool = True
     audio_targets: list[str] = Field(default_factory=lambda: ["browser"])
+    audio_playback: AudioPlayback = "host"
+    """``host``: nur das Geraet der Spielleitung gibt Ton aus (Tischlautsprecher)."""
     ai_provider: str | None = None
     ai_model: str | None = None
 
@@ -247,6 +252,9 @@ class AudioOut(Schema):
     url: str | None
     text: str
     voice: str
+    mime_type: str | None = None
+    narration_id: uuid.UUID | None = None
+    error: str | None = None
 
 
 class SummaryOut(Schema):

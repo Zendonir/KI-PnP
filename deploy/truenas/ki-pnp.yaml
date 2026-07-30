@@ -1,14 +1,21 @@
 # KI-PnP als TrueNAS-App (SCALE 24.10 "ElectricEel" oder neuer)
 #
 # Einbinden ueber:  Apps -> Discover Apps -> Custom App -> Install via YAML
-# Diesen Inhalt vollstaendig einfuegen und vorher die drei mit
-# ">>> ANPASSEN" markierten Stellen aendern.
+# Diesen Inhalt vollstaendig einfuegen und vorher die mit ">>> ANPASSEN"
+# markierten Stellen aendern.
 #
 # Wichtig: TrueNAS ersetzt in diesem Feld KEINE Variablen der Form ${...}.
 # Alle Werte stehen deshalb bewusst als Klartext hier drin.
 #
 # Der Frontend-Container liefert die Oberflaeche aus und reicht /api an das
 # Backend weiter. Nach aussen ist deshalb nur ein einziger Port noetig.
+#
+# Fuenf Dienste:
+#   db        PostgreSQL, enthaelt den gesamten Spielzustand
+#   redis     kurzer Weg fuer Meldungen zwischen Backend und Worker
+#   backend   Spiellogik und Schnittstellen
+#   worker    erzeugt die Sprachaufnahmen (nur bei serverseitiger Stimme noetig)
+#   frontend  Oberflaeche und Weiterleitung
 
 services:
   db:
@@ -17,8 +24,9 @@ services:
     environment:
       POSTGRES_USER: kipnp
       POSTGRES_DB: kipnp
-      # >>> ANPASSEN (1/3): eigenes Datenbankkennwort setzen.
-      # Muss unten in DATABASE_URL identisch wiederholt werden.
+      # >>> ANPASSEN: eigenes Datenbankkennwort setzen.
+      # Muss unten in DATABASE_URL identisch wiederholt werden -- an beiden
+      # Stellen, bei backend und bei worker.
       #
       # Nur Buchstaben, Ziffern, Bindestrich und Unterstrich verwenden!
       # Zeichen wie @ : / ? # % haben in einer Verbindungsadresse eine
@@ -36,39 +44,70 @@ services:
       retries: 10
       start_period: 30s
 
+  # Nur ein Briefkasten, kein Speicher: hier liegt nichts, was ueberleben
+  # muesste. Ohne diesen Dienst laeuft alles weiter -- eine fertige
+  # Sprachaufnahme erreicht die Geraete dann aber erst beim naechsten
+  # Abgleich, also bis zu zwoelf Sekunden spaeter statt sofort.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     image: ghcr.io/zendonir/ki-pnp-backend:latest
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      REDIS_URL: redis://redis:6379/0
       # Kennwort muss mit POSTGRES_PASSWORD oben uebereinstimmen -- und
       # ebenso frei von Sonderzeichen sein (siehe Hinweis dort).
       DATABASE_URL: postgresql+asyncpg://kipnp:bitte-datenbank-kennwort-aendern@db:5432/kipnp
 
-      # >>> ANPASSEN (2/3): Adresse, unter der die App im Netz erreichbar ist.
+      # >>> ANPASSEN: Adresse, unter der die App im Netz erreichbar ist.
       # Genau diese Adresse landet im QR-Code und im Beitrittslink. Steht hier
       # etwas Falsches, koennen Mitspieler den Code nicht scannen.
       # Beispiel: http://192.168.1.50:30080
       PUBLIC_BASE_URL: http://TRUENAS-IP-EINTRAGEN:30080
 
-      # >>> ANPASSEN (3/3): eigenes Token-Geheimnis setzen, z. B. erzeugt mit
+      # >>> ANPASSEN: eigenes Token-Geheimnis, z. B. erzeugt mit
       #     openssl rand -hex 32
       # Eine spaetere Aenderung meldet alle Spieler ab.
       JWT_SECRET: bitte-eigenes-geheimnis-eintragen
 
-      # Spielleiter-KI. "mock" laeuft ohne Schluessel und ohne Internet und
-      # ist zum Ausprobieren voellig ausreichend.
-      # Fuer echte KI: AI_PROVIDER auf "anthropic" setzen und den Schluessel
-      # bei ANTHROPIC_API_KEY eintragen.
-      AI_PROVIDER: mock
-      AI_MODEL: claude-opus-5
-      AI_EFFORT: high
-      ANTHROPIC_API_KEY: ""
+      # --- Spielleiter-KI ------------------------------------------------
+      # >>> ANPASSEN: OpenAI-Schluessel eintragen.
+      # Ohne Schluessel faellt die Anwendung auf den Offline-Spielleiter
+      # zurueck; sie laeuft dann weiter, erzaehlt aber schlichter.
+      AI_PROVIDER: openai
+      AI_MODEL: gpt-4o
+      OPENAI_API_KEY: ""
 
-      # Sprachausgabe erfolgt im Browser der Spieler, kein Dienst noetig.
-      TTS_PROVIDER: browser
+      # --- Sprachausgabe ------------------------------------------------
+      # Der Server erzeugt die Aufnahme, der Worker holt sie ab, und das
+      # Geraet der Spielleitung spielt sie ab. Wer mithoert, entscheidet die
+      # Runde selbst -- nicht diese Datei.
+      #
+      # Fuer ein lokales Sprachmodell auf demselben TrueNAS genuegt es,
+      # TTS_BASE_URL auf dessen Adresse zu richten, etwa
+      #   TTS_BASE_URL: http://192.168.1.50:8880/v1
+      # Ein Schluessel wird dort nicht verlangt. Die Werte muessen dann auch
+      # beim Dienst "worker" weiter unten angepasst werden.
+      TTS_PROVIDER: openai
+      TTS_MODEL: gpt-4o-mini-tts
+      TTS_VOICE: onyx
+      TTS_BASE_URL: https://api.openai.com/v1
+      # Leer lassen: es wird OPENAI_API_KEY verwendet.
+      TTS_API_KEY: ""
+
       ENVIRONMENT: prod
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
@@ -76,6 +115,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 90s
+
+  worker:
+    # Gleiches Image wie das Backend, nur ein anderer Startbefehl -- es wird
+    # also kein zweites Image geladen.
+    image: ghcr.io/zendonir/ki-pnp-backend:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Der Worker braucht keine Migrationen; das erledigt das Backend.
+    entrypoint: ["python", "-m", "app.workers.media"]
+    environment:
+      # >>> ANPASSEN: dasselbe Kennwort wie oben.
+      DATABASE_URL: postgresql+asyncpg://kipnp:bitte-datenbank-kennwort-aendern@db:5432/kipnp
+      REDIS_URL: redis://redis:6379/0
+      # Der Worker stellt keine Token aus, braucht also kein Geheimnis.
+      # Die Sprachausgabe muss zum Backend passen:
+      TTS_PROVIDER: openai
+      TTS_MODEL: gpt-4o-mini-tts
+      TTS_VOICE: onyx
+      TTS_BASE_URL: https://api.openai.com/v1
+      OPENAI_API_KEY: ""
+      TTS_API_KEY: ""
+      ENVIRONMENT: prod
 
   frontend:
     image: ghcr.io/zendonir/ki-pnp-frontend:latest

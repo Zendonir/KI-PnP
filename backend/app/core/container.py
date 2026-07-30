@@ -45,4 +45,5 @@ class Container:
     async def shutdown(self) -> None:
         await self.hub.stop()
         await self.llm.aclose()
+        await self.tts.aclose()
         await self.database.dispose()

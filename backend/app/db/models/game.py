@@ -68,6 +68,10 @@ class GameSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tts_provider: Mapped[str | None] = mapped_column(sa.String(30), nullable=True)
     audio_targets: Mapped[list[Any]] = mapped_column(default=list)
     """Ausgabeziele fuer Audio, z. B. ["browser", "sonos"]."""
+    audio_playback: Mapped[str] = mapped_column(sa.String(20), default="host")
+    """Wer die Erzaehlung hoerbar abspielt: ``host`` (nur das Geraet der
+    Spielleitung, also der Tischlautsprecher), ``all`` (jedes Geraet) oder
+    ``none``. Ein einzelnes Geraet kann die Rolle lokal uebernehmen."""
     summary_every_n_events: Mapped[int] = mapped_column(sa.Integer, default=40)
     debug_mode: Mapped[bool] = mapped_column(sa.Boolean, default=False)
     extra: Mapped[dict[str, Any]] = mapped_column(default=dict)

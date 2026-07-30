@@ -48,6 +48,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       TTS_PROVIDER: ${TTS_PROVIDER:-browser}
+      TTS_MODEL: ${TTS_MODEL:-gpt-4o-mini-tts}
+      TTS_VOICE: ${TTS_VOICE:-onyx}
+      TTS_BASE_URL: ${TTS_BASE_URL:-https://api.openai.com/v1}
+      TTS_API_KEY: ${TTS_API_KEY:-}
       ENVIRONMENT: ${ENVIRONMENT:-prod}
     networks: [kipnp]
 
@@ -84,21 +88,26 @@ services:
       - ollama-data:/root/.ollama
     networks: [kipnp]
 
-  # Optional: Worker fuer TTS- und Bildauftraege.
-  #   docker compose --profile worker up -d
+  # Erzeugt die Sprachaufnahmen. Laeuft immer mit: bei TTS_PROVIDER=browser
+  # hat er nichts zu tun, bei serverseitiger Stimme entsteht ohne ihn kein Ton.
   worker:
     build: ./backend
-    profiles: ["worker"]
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+    # Ohne das Standard-Entrypoint: Migrationen macht das Backend.
+    entrypoint: ["python", "-m", "app.workers.media"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kipnp}:${POSTGRES_PASSWORD:-kipnp}@db:5432/${POSTGRES_DB:-kipnp}
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: ${JWT_SECRET:-bitte-in-produktion-aendern}
       TTS_PROVIDER: ${TTS_PROVIDER:-browser}
-    command: ["python", "-m", "app.workers.media"]
+      TTS_MODEL: ${TTS_MODEL:-gpt-4o-mini-tts}
+      TTS_VOICE: ${TTS_VOICE:-onyx}
+      TTS_BASE_URL: ${TTS_BASE_URL:-https://api.openai.com/v1}
+      TTS_API_KEY: ${TTS_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ENVIRONMENT: ${ENVIRONMENT:-prod}
     networks: [kipnp]
 
 volumes:

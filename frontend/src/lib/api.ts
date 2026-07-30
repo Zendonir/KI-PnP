@@ -133,6 +133,22 @@ export const api = {
 
   replayAudio: (gameId: string, token: string) =>
     request<unknown>(`/games/${gameId}/audio/replay`, { method: "POST", token }),
+
+  /** Lädt eine serverseitig erzeugte Aufnahme.
+   *
+   * Der Endpunkt verlangt das Spieler-Token im Header, das ein
+   * `<audio src=...>` nicht mitschicken kann. Deshalb wird die Datei geholt
+   * und als Blob-Adresse an das Audio-Element gegeben.
+   */
+  fetchAudioUrl: async (gameId: string, token: string, audioId: string): Promise<string> => {
+    const response = await fetch(`${BASE}/games/${gameId}/audio/${audioId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, "audio_unavailable", "Aufnahme nicht verfügbar.");
+    }
+    return URL.createObjectURL(await response.blob());
+  },
 };
 
 /** WebSocket-Adresse fuer die Echtzeit-Synchronisation. */

@@ -300,10 +300,12 @@ class GameService:
             .all()
         )
         knowledge = await self._knowledge_for(game, my_character)
+        # Juengster Sprachauftrag -- auch ein noch offener, damit das Endgeraet
+        # weiss, dass Ton unterwegs ist.
         audio = (
             await self._session.execute(
                 sa.select(AudioJob)
-                .where(AudioJob.game_id == game.id, AudioJob.target == "browser")
+                .where(AudioJob.game_id == game.id)
                 .order_by(AudioJob.created_at.desc())
                 .limit(1)
             )
