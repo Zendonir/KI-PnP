@@ -199,3 +199,4 @@ Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren.
 | Der Worker meldet `401` | Der Schlüssel ist ungültig oder hat kein Guthaben. Bei einem lokalen Dienst darf `TTS_API_KEY` leer bleiben |
 | Der Worker meldet einen Verbindungsfehler | `TTS_BASE_URL` ist vom Container aus nicht erreichbar. Bei einem lokalen Dienst die IP des Servers verwenden, nicht `localhost` |
 | Die Erzählung hallt mehrfach durch den Raum | Mehrere Geräte geben Ton aus. Auf den übrigen *Ton hier* ausschalten |
+| Die App bleibt dauerhaft auf „Deploying" stehen, obwohl alle Container laufen | Ältere `ki-pnp.yaml` ohne `healthcheck: disable: true` beim Dienst `worker`. Er erbt sonst den Gesundheitscheck des Backends (`curl .../api/health`), kann ihn aber nie bestehen, weil er keinen Webserver startet. Die aktuelle `ki-pnp.yaml` aus diesem Repository einspielen (App bearbeiten → YAML ersetzen) |

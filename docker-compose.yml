@@ -105,6 +105,12 @@ services:
         condition: service_healthy
     # Ohne das Standard-Entrypoint: Migrationen macht das Backend.
     entrypoint: ["python", "-m", "app.workers.media"]
+    # Das Image bringt einen HEALTHCHECK fuer die API mit (curl auf
+    # /api/health). Der Worker startet aber keinen Webserver -- dieser Test
+    # koennte hier nie bestehen und liesse den Container (und damit die
+    # ganze App, z. B. in TrueNAS) dauerhaft auf "wird gestartet" stehen.
+    healthcheck:
+      disable: true
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kipnp}:${POSTGRES_PASSWORD:-kipnp}@db:5432/${POSTGRES_DB:-kipnp}
       REDIS_URL: redis://redis:6379/0

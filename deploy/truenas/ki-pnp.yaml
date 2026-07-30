@@ -134,6 +134,12 @@ services:
         condition: service_healthy
     # Der Worker braucht keine Migrationen; das erledigt das Backend.
     entrypoint: ["python", "-m", "app.workers.media"]
+    # Das Image bringt einen HEALTHCHECK fuer die API mit (curl auf
+    # /api/health). Der Worker startet aber keinen Webserver -- dieser Test
+    # koennte hier nie bestehen und liesse die App in TrueNAS dauerhaft auf
+    # "Deploying" stehen, obwohl alle Dienste laengst laufen.
+    healthcheck:
+      disable: true
     environment:
       # >>> ANPASSEN: dasselbe Kennwort wie oben.
       DATABASE_URL: postgresql+asyncpg://kipnp:bitte-datenbank-kennwort-aendern@db:5432/kipnp

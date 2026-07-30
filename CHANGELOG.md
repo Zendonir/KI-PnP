@@ -62,6 +62,11 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   Datenbank), bevor er startet. Sonst kann er nach einem Update kurzzeitig
   Spalten abfragen, die das Backend erst beim Einspielen der Migrationen
   anlegt — der Fehler heilte sich zwar von selbst, war aber vermeidbar.
+- Der geerbte Gesundheitscheck des Backend-Images (`curl .../api/health`)
+  ist beim Medien-Worker jetzt abgeschaltet. Er startet keinen Webserver,
+  der Test konnte dort nie bestehen — der Container (und mit ihm die ganze
+  App, etwa in TrueNAS) blieb dadurch dauerhaft auf „wird gestartet"
+  stehen, obwohl alle Dienste längst liefen.
 - Der Medien-Worker läuft in `docker-compose.yml` nicht mehr in einem Profil,
   sondern immer mit — ohne ihn entsteht bei serverseitiger Stimme kein Ton.
 - Die Sprachausgabe über OpenAI war bisher nur angedeutet und lieferte nie
