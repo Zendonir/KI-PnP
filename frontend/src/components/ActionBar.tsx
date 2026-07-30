@@ -76,35 +76,31 @@ export function ActionBar({
   }
 
   return (
-    <div className="space-y-3">
-      <Button
-        variant="ghost"
-        className="w-full"
-        disabled={disabled || busy}
-        onClick={() => void send("wait", "Ich unternehme nichts und beobachte die Lage.")}
-      >
-        <span className="mr-1.5" aria-hidden>
-          🧘
-        </span>
-        Nichts tun
-      </Button>
-
-      <input
-        value={freeText}
-        onChange={(event) => setFreeText(event.target.value)}
-        disabled={disabled || busy}
-        placeholder="Was tust du?"
-        className="min-h-11 w-full rounded-xl border border-ink-600 bg-ink-900 px-3 text-base outline-none focus:border-ember-500 disabled:opacity-50"
-      />
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          value={freeText}
+          onChange={(event) => setFreeText(event.target.value)}
+          disabled={disabled || busy}
+          placeholder="Was tust du?"
+          className="min-h-11 flex-1 rounded-xl border border-ink-600 bg-ink-900 px-3 text-base outline-none focus:border-ember-500 disabled:opacity-50"
+        />
+        <Button
+          variant="ghost"
+          disabled={disabled || busy}
+          onClick={() => void send("wait", "Ich unternehme nichts und beobachte die Lage.")}
+          title="Nichts tun"
+          aria-label="Nichts tun"
+        >
+          <span aria-hidden>🧘</span>
+        </Button>
+      </div>
 
       {character.inventory.length > 0 && (
-        <details className="rounded-xl border border-ink-700 bg-ink-800/60 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-parchment/80">
+        <details className="rounded-xl border border-ink-700 bg-ink-800/60 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold text-parchment/70">
             Gegenstand markieren
           </summary>
-          <p className="mt-1 text-xs text-parchment/50">
-            Markiert den Gegenstand fuer die naechste Handlung -- sendet noch nichts ab.
-          </p>
           <div className="mt-2 flex flex-wrap gap-2">
             {character.inventory.map((entry) => {
               const active = markedItem === entry.name;
@@ -129,23 +125,19 @@ export function ActionBar({
         </details>
       )}
 
-      <div>
-        <p className="mb-1.5 text-xs text-parchment/50">
-          Worauf wuerfelt diese Handlung? Die KI bewertet, ob die Wahl passt.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {rollableStats.map((stat) => (
-            <button
-              key={stat.key}
-              type="button"
-              disabled={disabled || busy || !freeText.trim()}
-              onClick={() => void send(markedItem ? "use_item" : "custom", freeText, stat.key)}
-              className="rounded-xl border border-ink-600 bg-ink-800 px-3 py-2 text-left text-sm font-semibold text-parchment transition active:scale-[0.98] disabled:opacity-50"
-            >
-              {CORE_STAT_LABELS[stat.key] ?? stat.key}
-            </button>
-          ))}
-        </div>
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <span className="shrink-0 text-xs text-parchment/50">Attribut:</span>
+        {rollableStats.map((stat) => (
+          <button
+            key={stat.key}
+            type="button"
+            disabled={disabled || busy || !freeText.trim()}
+            onClick={() => void send(markedItem ? "use_item" : "custom", freeText, stat.key)}
+            className="min-h-9 shrink-0 whitespace-nowrap rounded-full border border-ink-600 bg-ink-800 px-3 py-1.5 text-sm font-semibold text-parchment transition active:scale-[0.98] disabled:opacity-50"
+          >
+            {CORE_STAT_LABELS[stat.key] ?? stat.key}
+          </button>
+        ))}
       </div>
     </div>
   );

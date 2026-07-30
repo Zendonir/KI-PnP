@@ -47,11 +47,33 @@ class Turn(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         sa.ForeignKey("locations.id", ondelete="SET NULL"), nullable=True
     )
     resolved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    revealed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """Wann Erzaehlung, Ton und Wuerfelergebnisse dieses Zugs fuer die ganze
+    Gruppe sichtbar wurden -- erst wenn alle erwarteten Spieler ihr
+    Wuerfel-Popup bestaetigt haben (siehe TurnAck) oder die Spielleitung
+    vorzeitig aufdeckt. Getrennt von resolved_at (mechanische Aufloesung,
+    passiert sofort), damit niemand vorzeitig weiterliest oder -hoert."""
     suggestions: Mapped[dict[str, Any]] = mapped_column(default=dict)
     """Handlungsvorschlaege je Charaktername fuer diese Runde."""
 
     actions: Mapped[list[Action]] = relationship(
         back_populates="turn", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class TurnAck(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Bestaetigung eines Spielers, die Wuerfelergebnisse eines Zugs gesehen
+    zu haben. Sobald alle erwarteten Spieler bestaetigt haben, gilt der Zug
+    als aufgedeckt (Turn.revealed_at)."""
+
+    __tablename__ = "turn_acks"
+    __table_args__ = (sa.UniqueConstraint("turn_id", "player_id", name="uq_turn_ack"),)
+
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("turns.id", ondelete="CASCADE"), index=True
+    )
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("players.id", ondelete="CASCADE"), index=True
     )
 
 

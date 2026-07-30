@@ -37,8 +37,22 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   dem Ergebnis (Erfolg, kritischer Erfolg, Patzer usw.), bevor die schon
   im Hintergrund fertiggestellte Erzaehlung samt Sprachausgabe sichtbar
   wird beziehungsweise Ton abspielt. Die KI und die Vertonung laufen
-  bereits waehrend der Animation — ein Klick auf „Weiter" blendet nur das
-  bereits fertige Ergebnis ein, ohne weitere Wartezeit.
+  bereits waehrend der Animation. Das Aufdecken ist jetzt gruppenweit
+  synchronisiert: Erzaehlung, Ton und die Wuerfelergebnisse im Verlauf
+  bleiben verborgen, bis jede an der Szene beteiligte Person ihr Popup
+  bestaetigt hat — niemand liest oder hoert vor dem Rest der Gruppe
+  weiter. Die Spielleitung kann vorzeitig aufdecken, falls jemand nicht
+  mehr reagiert. Dieser Fortschritt (Server-Wahrheit, kein reiner
+  Client-Zustand) uebersteht auch einen Neuladen der Seite mitten in der
+  Wartezeit.
+- Wuerfelergebnisse einer unabhaengig laufenden Szene an einem anderen Ort
+  (Split-Party) tauchten bislang sofort im eigenen Verlauf auf, noch bevor
+  der eigene Zug ueberhaupt abgeschlossen war — derselbe Ortsfilter wie
+  bei der Erzaehlung gilt jetzt auch fuer Wuerfe.
+- Handlungsleiste entschlackt: kompaktere Anordnung (Freitext und „Nichts
+  tun" nebeneinander, Attribut-Auswahl als waagerecht scrollende Reihe
+  statt Raster), damit sie auf einem normalen Handy-Bildschirm nicht mehr
+  vom unteren Reiter-Balken abgeschnitten wird.
 - Neue Handlungsart „Nichts tun": bei jeder Runde als eigener, immer
   sichtbarer Knopf verfuegbar (nicht nur unter den KI-Vorschlaegen).
   Bewusstes Abwarten ist immer erlaubt, kostet nichts und braucht keine

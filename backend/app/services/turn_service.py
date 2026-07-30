@@ -44,6 +44,7 @@ from app.db.models import (
     Player,
     SceneSummary,
     Turn,
+    TurnAck,
 )
 from app.domain import dice
 from app.domain.rules import ActionRequest, get_ruleset
@@ -77,6 +78,34 @@ class _StatFit:
     auto_fail: bool = False
 
 _INTERVENTION_TIMEOUT_SECONDS = 8.0
+
+
+async def expected_player_ids(
+    session: AsyncSession, game: Game, location_id: uuid.UUID | None
+) -> set[uuid.UUID]:
+    """Aktive, lebende Spieler, deren Charakter sich an diesem Ort befindet.
+
+    Eigenstaendige Funktion statt einer TurnService-Methode: sowohl die
+    Zug-Bereitschaft (turn_ready, hier in dieser Datei) als auch die
+    Zusammenfassung des Aufdeckungs-Fortschritts (GameService.build_state,
+    fuer state.pending_reveal) brauchen dieselbe Menge.
+    """
+    location_filter = (
+        Character.location_id.is_(None)
+        if location_id is None
+        else Character.location_id == location_id
+    )
+    stmt = (
+        sa.select(Player.id)
+        .join(Character, Character.player_id == Player.id)
+        .where(
+            Player.game_id == game.id,
+            Player.is_active.is_(True),
+            Character.is_alive.is_(True),
+            location_filter,
+        )
+    )
+    return set((await session.execute(stmt)).scalars().all())
 
 
 class TurnService:
@@ -381,25 +410,67 @@ class TurnService:
         befindet, zaehlen -- das ist der Mechanismus, der eine Aufteilung
         der Gruppe ueberhaupt erst unabhaengig aufloesen laesst.
         """
-        location_filter = (
-            Character.location_id.is_(None)
-            if turn.location_id is None
-            else Character.location_id == turn.location_id
-        )
-        stmt = (
-            sa.select(Player.id)
-            .join(Character, Character.player_id == Player.id)
-            .where(
-                Player.game_id == game.id,
-                Player.is_active.is_(True),
-                Character.is_alive.is_(True),
-                location_filter,
-            )
-        )
-        expected = set((await self._session.execute(stmt)).scalars().all())
+        expected = await expected_player_ids(self._session, game, turn.location_id)
         if not expected:
             return False
         return expected.issubset(await self.pending_player_ids(turn))
+
+    # -- Aufdecken ---------------------------------------------------------
+    #
+    # Wuerfelergebnisse, Erzaehlung und Ton eines abgeschlossenen Zugs
+    # entstehen sofort im Hintergrund, werden aber erst fuer alle sichtbar,
+    # sobald jeder erwartete Spieler sein Wuerfel-Popup bestaetigt hat (oder
+    # die Spielleitung vorzeitig aufdeckt) -- niemand liest oder hoert vor
+    # dem Rest der Gruppe weiter.
+
+    async def acknowledge_turn(self, game: Game, turn: Turn, player: Player) -> Turn:
+        """Merkt sich, dass ein Spieler die Wuerfelergebnisse gesehen hat."""
+        if turn.status != "completed":
+            raise ConflictError("Dieser Zug ist noch nicht abgeschlossen.")
+        if turn.revealed_at is None:
+            exists_stmt = sa.select(TurnAck.id).where(
+                TurnAck.turn_id == turn.id, TurnAck.player_id == player.id
+            )
+            already = (await self._session.execute(exists_stmt)).scalar_one_or_none()
+            if already is None:
+                self._session.add(TurnAck(turn_id=turn.id, player_id=player.id))
+                await self._session.flush()
+
+            acked_stmt = sa.select(TurnAck.player_id).where(TurnAck.turn_id == turn.id)
+            acked = set((await self._session.execute(acked_stmt)).scalars().all())
+            expected = await expected_player_ids(self._session, game, turn.location_id)
+            if not expected or expected.issubset(acked):
+                await self._reveal_turn(game, turn)
+
+            await self._session.commit()
+            await self._recorder.flush_to_clients(game.id)
+        return turn
+
+    async def force_reveal_turn(self, game: Game, turn: Turn) -> Turn:
+        """Deckt einen Zug sofort auf, unabhaengig von fehlenden Bestaetigungen.
+
+        Nur der Spielleitung erlaubt (HostDep am Endpunkt) -- fuer den Fall,
+        dass ein Mitspieler nicht mehr reagiert (App im Hintergrund,
+        Verbindung weg) und die Runde sonst haengen bliebe.
+        """
+        if turn.status != "completed":
+            raise ConflictError("Dieser Zug ist noch nicht abgeschlossen.")
+        if turn.revealed_at is None:
+            await self._reveal_turn(game, turn)
+            await self._session.commit()
+            await self._recorder.flush_to_clients(game.id)
+        return turn
+
+    async def _reveal_turn(self, game: Game, turn: Turn) -> None:
+        turn.revealed_at = utcnow()
+        await self._recorder.record(
+            game,
+            type=ev.TURN_REVEALED,
+            summary=f"Zug {turn.number}: Ergebnisse fuer alle sichtbar.",
+            payload={"turn_id": str(turn.id), "turn_number": turn.number},
+            turn_id=turn.id,
+            counts_towards_summary=False,
+        )
 
     # -- Aufloesung ------------------------------------------------------
 

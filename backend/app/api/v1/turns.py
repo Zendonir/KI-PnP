@@ -154,6 +154,50 @@ async def skip_scene(
     return await games.build_state(host.game, host.player)
 
 
+@router.post("/turns/{turn_id}/ack", response_model=GameStateOut)
+async def acknowledge_turn(
+    turn_id: uuid.UUID,
+    principal: PrincipalDep,
+    games: GameServiceDep,
+    turns: TurnServiceDep,
+    session: SessionDep,
+) -> GameStateOut:
+    """Bestaetigt, die Wuerfelergebnisse eines abgeschlossenen Zugs gesehen
+    zu haben.
+
+    Zeigt das Wuerfel-Popup die eigenen Ergebnisse zwar sofort, Erzaehlung
+    und Ton bleiben im Verlauf aber verborgen, bis jeder erwartete Spieler
+    hier bestaetigt hat (oder die Spielleitung ueber /reveal vorzeitig
+    aufdeckt) -- niemand liest oder hoert vor dem Rest der Gruppe weiter.
+    """
+    turn = await session.get(Turn, turn_id)
+    if turn is None or turn.game_id != principal.game.id:
+        raise NotFoundError("Dieser Zug gehoert nicht zu dieser Runde.")
+    await turns.acknowledge_turn(principal.game, turn, principal.player)
+    return await games.build_state(principal.game, principal.player)
+
+
+@router.post("/turns/{turn_id}/reveal", response_model=GameStateOut)
+async def reveal_turn(
+    turn_id: uuid.UUID,
+    host: HostDep,
+    games: GameServiceDep,
+    turns: TurnServiceDep,
+    session: SessionDep,
+) -> GameStateOut:
+    """Deckt einen Zug sofort fuer alle auf (Spielleiter-Funktion).
+
+    Fuer den Fall, dass ein Mitspieler nicht mehr reagiert (App im
+    Hintergrund, Verbindung weg) und die Runde sonst auf dessen Bestaetigung
+    warten wuerde.
+    """
+    turn = await session.get(Turn, turn_id)
+    if turn is None or turn.game_id != host.game.id:
+        raise NotFoundError("Dieser Zug gehoert nicht zu dieser Runde.")
+    await turns.force_reveal_turn(host.game, turn)
+    return await games.build_state(host.game, host.player)
+
+
 @router.post("/interventions/{intervention_id}/respond", response_model=OkResponse)
 async def respond_intervention(
     intervention_id: uuid.UUID,

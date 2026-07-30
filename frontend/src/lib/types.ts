@@ -122,6 +122,17 @@ export interface Turn {
   my_suggestions: Suggestion[];
 }
 
+/** Aufdeckungs-Fortschritt des letzten abgeschlossenen Zugs am eigenen Ort.
+ * Solange revealed false ist, haelt das Frontend Wuerfelergebnisse,
+ * Erzaehlung und Ton dieses Zugs im Verlauf zurueck -- das Wuerfel-Popup
+ * selbst zeigt die eigenen Ergebnisse trotzdem sofort. */
+export interface PendingReveal {
+  turn_id: string;
+  revealed: boolean;
+  acknowledged_player_ids: string[];
+  expected_player_ids: string[];
+}
+
 /** Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung. */
 export interface ActiveLocationTurn {
   turn_id: string;
@@ -228,6 +239,7 @@ export interface GameState {
   me: Player;
   my_character: Character | null;
   turn: Turn | null;
+  pending_reveal: PendingReveal | null;
   narrations: Narration[];
   dice_rolls: DiceRoll[];
   quests: Quest[];

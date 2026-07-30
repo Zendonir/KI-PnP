@@ -25,6 +25,7 @@ from app.db.models import (
     Player,
     Quest,
     Turn,
+    TurnAck,
     WorldEntity,
 )
 from app.realtime.hub import EventHub
@@ -40,6 +41,7 @@ from app.schemas.api import (
     GameStateOut,
     LocationOut,
     NarrationOut,
+    PendingRevealOut,
     PlayerOut,
     QuestOut,
     SuggestionOut,
@@ -47,6 +49,7 @@ from app.schemas.api import (
 )
 from app.services import events as ev
 from app.services.events import EventRecorder, load_recent_events
+from app.services.turn_service import expected_player_ids
 from app.services.views import character_to_out
 
 
@@ -279,11 +282,20 @@ class GameService:
             .scalars()
             .all()
         )
+        # Derselbe Ortsfilter wie bei narrations: ohne ihn saehe man
+        # Wuerfelergebnisse einer unabhaengig laufenden Szene an einem
+        # anderen Ort mit -- und, schlimmer, ausserhalb des eigenen
+        # Wuerfel-Popups zu einem Zeitpunkt, an dem fuer die eigene Szene
+        # noch gar kein Zug abgeschlossen ist.
         rolls = list(
             (
                 await self._session.execute(
                     sa.select(DiceRoll)
-                    .where(DiceRoll.game_id == game.id)
+                    .outerjoin(Turn, Turn.id == DiceRoll.turn_id)
+                    .where(
+                        DiceRoll.game_id == game.id,
+                        sa.or_(Turn.id.is_(None), same_location),
+                    )
                     .order_by(DiceRoll.created_at.desc())
                     .limit(20)
                 )
@@ -396,6 +408,47 @@ class GameService:
                 my_suggestions=suggestions,
             )
 
+        pending_reveal = None
+        if my_character is not None:
+            pending_location_filter = (
+                Turn.location_id.is_(None)
+                if my_character.location_id is None
+                else Turn.location_id == my_character.location_id
+            )
+            last_completed = (
+                await self._session.execute(
+                    sa.select(Turn)
+                    .where(
+                        Turn.game_id == game.id,
+                        Turn.status == "completed",
+                        pending_location_filter,
+                    )
+                    .order_by(Turn.number.desc())
+                    .limit(1)
+                )
+            ).scalars().first()
+            if last_completed is not None:
+                acked = set(
+                    (
+                        await self._session.execute(
+                            sa.select(TurnAck.player_id).where(
+                                TurnAck.turn_id == last_completed.id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                expected = await expected_player_ids(
+                    self._session, game, last_completed.location_id
+                )
+                pending_reveal = PendingRevealOut(
+                    turn_id=last_completed.id,
+                    revealed=last_completed.revealed_at is not None,
+                    acknowledged_player_ids=sorted(acked),
+                    expected_player_ids=sorted(expected),
+                )
+
         active_location_turns = (
             await self._active_location_turns(game) if player.role == "host" else None
         )
@@ -411,6 +464,7 @@ class GameService:
                 await character_to_out(self._session, my_character) if my_character else None
             ),
             turn=turn_out,
+            pending_reveal=pending_reveal,
             narrations=[
                 NarrationOut.model_validate(item) for item in reversed(narrations)
             ],

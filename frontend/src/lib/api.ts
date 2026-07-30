@@ -128,6 +128,12 @@ export const api = {
       { method: "POST", token },
     ),
 
+  ackTurn: (gameId: string, token: string, turnId: string) =>
+    request<GameState>(`/games/${gameId}/turns/${turnId}/ack`, { method: "POST", token }),
+
+  forceReveal: (gameId: string, token: string, turnId: string) =>
+    request<GameState>(`/games/${gameId}/turns/${turnId}/reveal`, { method: "POST", token }),
+
   respondIntervention: (gameId: string, token: string, interventionId: string, accepted: boolean) =>
     request<unknown>(`/games/${gameId}/interventions/${interventionId}/respond`, {
       method: "POST",

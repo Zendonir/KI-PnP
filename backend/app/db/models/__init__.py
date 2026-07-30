@@ -24,6 +24,7 @@ from app.db.models.turn import (
     Narration,
     SceneSummary,
     Turn,
+    TurnAck,
 )
 from app.db.models.world import (
     EntityState,
@@ -62,5 +63,6 @@ __all__ = [
     "RuntimeSettings",
     "SceneSummary",
     "Turn",
+    "TurnAck",
     "WorldEntity",
 ]

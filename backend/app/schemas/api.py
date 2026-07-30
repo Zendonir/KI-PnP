@@ -230,6 +230,18 @@ class TurnOut(Schema):
     my_suggestions: list[SuggestionOut] = Field(default_factory=list)
 
 
+class PendingRevealOut(Schema):
+    """Aufdeckungs-Fortschritt des letzten abgeschlossenen Zugs am eigenen
+    Ort. Solange revealed False ist, haelt das Frontend Wuerfelergebnisse,
+    Erzaehlung und Ton dieses Zugs im Verlauf zurueck -- das Wuerfel-Popup
+    selbst zeigt die eigenen Ergebnisse trotzdem sofort."""
+
+    turn_id: uuid.UUID
+    revealed: bool
+    acknowledged_player_ids: list[uuid.UUID] = Field(default_factory=list)
+    expected_player_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
 class ActiveLocationTurnOut(Schema):
     """Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung."""
 
@@ -314,6 +326,7 @@ class GameStateOut(Schema):
     me: PlayerOut
     my_character: CharacterOut | None
     turn: TurnOut | None
+    pending_reveal: PendingRevealOut | None = None
     narrations: list[NarrationOut]
     dice_rolls: list[DiceRollOut]
     quests: list[QuestOut]

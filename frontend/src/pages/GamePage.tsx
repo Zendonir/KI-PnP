@@ -1,6 +1,6 @@
 /** Lobby und Spieltisch. */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ActionBar } from "../components/ActionBar";
@@ -20,7 +20,7 @@ import { NarrationFeed } from "../components/NarrationFeed";
 import { Badge, Button, Card, ErrorNote, Field, Spinner, TextInput } from "../components/ui";
 import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
-import type { DiceRoll, GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
+import type { GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
 import { useGameState } from "../lib/useGameState";
 
 type Tab = "story" | "character" | "quests" | "world" | "log";
@@ -485,45 +485,54 @@ function TableView({
   };
 
   // Das Backend loest einen Zug vollstaendig auf, sobald alle eingereicht
-  // haben -- Erzaehlung und Sprachausgabe entstehen also schon im
-  // Hintergrund, waehrend hier noch das Wuerfel-Popup laeuft. Ein Wechsel
-  // der Zug-Kennung zeigt an, dass der zuvor gezeigte Zug gerade
-  // abgeschlossen wurde; dessen Wuerfe werden dann kurz zurueckgehalten und
-  // angezeigt, bevor "Weiter" die schon fertige Erzaehlung (und deren Ton)
-  // freigibt -- rein lokal, ohne weiteren Netzwerkaufruf.
-  const previousTurnIdRef = useRef<string | null>(null);
-  const [pendingReveal, setPendingReveal] = useState<
-    { turnId: string; rolls: DiceRoll[] } | null
-  >(null);
-  useEffect(() => {
-    const currentId = state.turn?.id ?? null;
-    const previousId = previousTurnIdRef.current;
-    if (previousId && currentId !== previousId) {
-      const rolls = state.dice_rolls.filter((roll) => roll.turn_id === previousId);
-      if (rolls.length > 0) {
-        setPendingReveal({ turnId: previousId, rolls });
-      }
-    }
-    previousTurnIdRef.current = currentId;
-    // state.dice_rolls absichtlich nicht in den Abhaengigkeiten: der
-    // Zug-Wechsel selbst ist das Ausloesekriterium, die Wuerfe werden aus
-    // demselben, zu diesem Zeitpunkt schon aktuellen state gelesen.
-  }, [state.turn?.id]);
+  // haben -- Wuerfelergebnisse, Erzaehlung und Sprachausgabe entstehen also
+  // schon im Hintergrund. state.pending_reveal ist die Server-Wahrheit
+  // darueber, ob der zuletzt abgeschlossene Zug am eigenen Ort schon fuer
+  // die ganze Gruppe aufgedeckt ist -- nicht nur lokaler Client-Zustand,
+  // uebersteht also auch Reload/Rekonnekt (anders als ein reiner Vorher-
+  // Nachher-Vergleich des Zug-Zeigers, der beim ersten Laden nach einem
+  // Reload nichts zum Vergleichen haette und Ergebnisse ungefiltert
+  // durchliesse).
+  const pending = state.pending_reveal;
+  const pendingRolls = useMemo(
+    () => (pending ? state.dice_rolls.filter((roll) => roll.turn_id === pending.turn_id) : []),
+    [pending, state.dice_rolls],
+  );
+  const iHaveAcked = Boolean(pending?.acknowledged_player_ids.includes(state.me.id));
+  const showRevealModal = Boolean(pending) && !pending!.revealed && !iHaveAcked && pendingRolls.length > 0;
+  const waitingForGroup = Boolean(pending) && !pending!.revealed && iHaveAcked;
 
+  const [acking, setAcking] = useState(false);
+  const acknowledgeReveal = async () => {
+    if (!pending || acking) return;
+    setAcking(true);
+    try {
+      await api.ackTurn(state.game.id, token, pending.turn_id);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Bestaetigung fehlgeschlagen.");
+    } finally {
+      setAcking(false);
+    }
+  };
+  const forceReveal = async () => {
+    if (!pending) return;
+    await run(() => api.forceReveal(state.game.id, token, pending.turn_id));
+  };
+
+  const pendingTurnId = pending && !pending.revealed ? pending.turn_id : null;
   const pendingNarrationIds = useMemo(() => {
-    if (!pendingReveal) return new Set<string>();
+    if (!pendingTurnId) return new Set<string>();
     return new Set(
-      state.narrations
-        .filter((item) => item.turn_id === pendingReveal.turnId)
-        .map((item) => item.id),
+      state.narrations.filter((item) => item.turn_id === pendingTurnId).map((item) => item.id),
     );
-  }, [pendingReveal, state.narrations]);
+  }, [pendingTurnId, state.narrations]);
 
   const visibleNarrations = pendingNarrationIds.size
     ? state.narrations.filter((item) => !pendingNarrationIds.has(item.id))
     : state.narrations;
-  const visibleRolls = pendingReveal
-    ? state.dice_rolls.filter((roll) => roll.turn_id !== pendingReveal.turnId)
+  const visibleRolls = pendingTurnId
+    ? state.dice_rolls.filter((roll) => roll.turn_id !== pendingTurnId)
     : state.dice_rolls;
   const visibleLatestNarration = visibleNarrations.at(-1) ?? null;
   const visibleAudio =
@@ -549,11 +558,11 @@ function TableView({
   // niemals den Erzaehlstrang -- auch nicht bei langen Vorschlagslisten.
   return (
     <div className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden">
-      {pendingReveal && (
+      {showRevealModal && (
         <DiceRollModal
-          rolls={pendingReveal.rolls}
+          rolls={pendingRolls}
           characterNames={characterNames}
-          onDismiss={() => setPendingReveal(null)}
+          onDismiss={() => void acknowledgeReveal()}
         />
       )}
 
@@ -601,6 +610,19 @@ function TableView({
 
         {tab === "story" && (
           <>
+            {waitingForGroup && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-700 bg-ink-800/70 px-3 py-2 text-sm text-parchment/70">
+                <span>
+                  Warte auf die Gruppe: {pending!.acknowledged_player_ids.length}/
+                  {pending!.expected_player_ids.length} bestätigt
+                </span>
+                {state.is_host && (
+                  <Button variant="ghost" disabled={busy} onClick={() => void forceReveal()}>
+                    Jetzt anzeigen
+                  </Button>
+                )}
+              </div>
+            )}
             <NarrationFeed
               narrations={visibleNarrations}
               rolls={visibleRolls}
