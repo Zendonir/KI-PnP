@@ -274,9 +274,14 @@ function LobbyView({
           hostId={state.players.find((player) => player.role === "host")?.id ?? null}
         />
 
-        {state.my_character ? (
-          <CharacterSheet character={state.my_character} />
-        ) : skillStep === "names" ? (
+        {/* skillStep zuerst pruefen, nicht erst state.my_character: der
+            Charakter existiert in der Datenbank schon, sobald die
+            Erstellung selbst erfolgreich war -- lange bevor Faehigkeiten
+            zugewiesen sind. Ein Echtzeit-Update durch irgendeine Aktion
+            eines anderen Spielers (Beitritt, eigene Charaktererstellung
+            usw.) wuerde sonst mitten in diesem Schritt auf das
+            Charakterblatt springen. */}
+        {skillStep === "names" ? (
           <Card title="Fähigkeiten benennen">
             <p className="mb-3 text-sm text-parchment/65">
               Erfinde eigene Fähigkeiten (z. B. „Schlösser knacken"). Im naechsten Schritt
@@ -368,6 +373,8 @@ function LobbyView({
               </Button>
             </div>
           </Card>
+        ) : state.my_character ? (
+          <CharacterSheet character={state.my_character} />
         ) : (
           <Card title="Charakter erstellen">
             <div className="space-y-3">
