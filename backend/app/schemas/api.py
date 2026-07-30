@@ -173,6 +173,7 @@ class ActionSubmitRequest(Schema):
 
 class DiceRollOut(Schema):
     id: uuid.UUID
+    turn_id: uuid.UUID | None = None
     character_id: uuid.UUID | None
     notation: str
     rolls: list[int]
@@ -314,6 +315,10 @@ class AdminKickRequest(Schema):
 class OkResponse(Schema):
     ok: bool = True
     message: str = ""
+
+
+class InterventionRespondRequest(Schema):
+    accepted: bool
 
 
 # --- Installationsweite Einstellungen ------------------------------------

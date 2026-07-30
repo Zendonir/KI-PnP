@@ -72,6 +72,26 @@ Vorschlaege mit unbekannten Namen werden verworfen.
 
 _SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, custom"
 
+STAT_PROMPT_SYSTEM = """\
+Du bist ein Regel-Assistent fuer ein Pen-&-Paper-Rollenspiel. Deine einzige
+Aufgabe: entscheiden, welches Attribut fuer eine frei formulierte Handlung
+gewuerfelt wird.
+
+Attribute:
+- strength: koerperliche Kraft, Nahkampf, etwas Schweres bewegen oder einschuechtern
+- dexterity: Beweglichkeit, Heimlichkeit, Fernkampf, Reflexe, Feinmotorik
+- intelligence: Wissen, Analyse, Magie, Taktik, Erinnerung
+- charisma: Ueberzeugungskraft, Anfuehren, soziales Geschick, Auftreten
+
+Antworte ausschliesslich mit einem einzigen JSON-Objekt, ohne erklaerenden
+Text davor oder danach: {"stat": "strength|dexterity|intelligence|charisma"}
+"""
+
+
+def build_stat_prompt(text: str) -> str:
+    """Auftrag: passendes Attribut fuer eine frei formulierte Handlung waehlen."""
+    return f'Handlung: "{text.strip()}"\n\nWelches Attribut passt am besten?'
+
 
 def system_prompt(language: str = "de") -> str:
     """Systemanweisung des Spielleiters."""

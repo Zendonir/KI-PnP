@@ -17,7 +17,10 @@ werden -- es geht nichts verloren.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import uuid
 from typing import Any
 
 import pydantic
@@ -42,10 +45,11 @@ from app.db.models import (
     Turn,
 )
 from app.domain import dice
-from app.domain.rules import ActionRequest, get_ruleset
+from app.domain.rules import ACTION_KINDS, ActionRequest, get_ruleset
 from app.realtime.hub import EventHub
 from app.schemas.api import ActionSubmitRequest
 from app.services import events as ev
+from app.services import interventions
 from app.services.context import ContextBuilder
 from app.services.events import EventRecorder, increment_game_counter
 from app.services.runtime_settings import get_effective_tts
@@ -54,6 +58,14 @@ from app.services.views import character_to_domain
 from app.tts.providers import SpeechRequest, TTSProvider
 
 logger = logging.getLogger(__name__)
+
+_KNOWN_STATS = frozenset({"strength", "dexterity", "intelligence", "charisma"})
+
+_INTERVENTION_CHANCE = 0.10
+"""Anteil der Zugaufloesungen, bei denen ein Mitspieler kurz eingreifen darf --
+selten genug, um zu ueberraschen (siehe _maybe_offer_intervention)."""
+
+_INTERVENTION_TIMEOUT_SECONDS = 8.0
 
 
 class TurnService:
@@ -118,9 +130,14 @@ class TurnService:
 
         results: list[tuple[Turn, bool]] = []
         for location_id in location_ids:
+            # "resolving" zaehlt hier bewusst mit: sonst haelt kein Zug den
+            # Ort besetzt, waehrend Phase A schon fertig ist, aber noch auf
+            # /continue wartet -- ein zweiter, neu angelegter "collecting"-
+            # Zug am selben Ort waere sonst moeglich (etwa ueber
+            # ensure_turn_for_character).
             existing_stmt = sa.select(Turn).where(
                 Turn.game_id == game.id,
-                Turn.status == "collecting",
+                Turn.status.in_(("collecting", "resolving")),
                 Turn.location_id.is_(None) if location_id is None
                 else Turn.location_id == location_id,
             )
@@ -362,20 +379,65 @@ class TurnService:
     # -- Aufloesung ------------------------------------------------------
 
     async def resolve_turn(self, game: Game, turn: Turn) -> Turn:
-        """Fuehrt beide Phasen aus und startet die naechste Runde."""
+        """Fuehrt beide Phasen aus und startet die naechste Runde.
+
+        Fuer Tests und interne Zwecke gedacht. Die normalen Aufloesungswege
+        (Einreichen der letzten Handlung, /resolve, /skip) rufen stattdessen
+        ``resolve_mechanics`` allein auf -- die Erzaehlung folgt erst, wenn
+        die Spieler das Wuerfelergebnis per /continue bestaetigt haben.
+        """
         if turn.status == "completed":
             raise ConflictError("Dieser Zug ist bereits abgeschlossen.")
 
         results = await self._resolve_mechanics(game, turn)
         return await self._narrate(game, turn, results)
 
+    async def resolve_mechanics(self, game: Game, turn: Turn) -> list[dict[str, Any]]:
+        """Oeffentlicher Zugang zu Phase A allein, ohne sofort zu erzaehlen."""
+        if turn.status == "completed":
+            raise ConflictError("Dieser Zug ist bereits abgeschlossen.")
+        return await self._resolve_mechanics(game, turn)
+
     async def renarrate(self, game: Game, turn: Turn) -> Turn:
-        """Erzaehlt einen bereits mechanisch aufgeloesten Zug neu."""
+        """Erzaehlt einen bereits mechanisch aufgeloesten Zug neu.
+
+        Dient sowohl der Spielleitungsfunktion "KI neu erzaehlen" als auch
+        dem normalen /continue nach dem Wuerfel-Popup -- in beiden Faellen
+        stehen Wuerfe und Kosten schon fest, nur der Erzaehltext entsteht neu.
+        """
         results = await self._results_from_actions(turn)
         return await self._narrate(game, turn, results)
 
     async def _resolve_mechanics(self, game: Game, turn: Turn) -> list[dict[str, Any]]:
         """Phase A: Regelpruefung, Kosten und Wuerfe."""
+        pending_stmt = sa.select(Action).where(
+            Action.turn_id == turn.id, Action.status == "pending"
+        )
+        pending_actions = list((await self._session.execute(pending_stmt)).scalars().all())
+
+        # Frei formulierte Handlungen bekommen ihr Attribut von einer
+        # kleinen KI-Einschaetzung statt der starren Kind-Zuordnung -- vor
+        # dem Sperren der Spielzeile, damit die Anfragen nicht seriell unter
+        # Lock warten.
+        custom_actions = [
+            a for a in pending_actions if a.kind == "custom" or a.kind not in ACTION_KINDS
+        ]
+        stat_hints: dict[uuid.UUID, str] = {}
+        if custom_actions:
+            classified = await asyncio.gather(
+                *(self._classify_custom_stat(a.text) for a in custom_actions)
+            )
+            stat_hints = dict(zip((a.id for a in custom_actions), classified, strict=True))
+
+        # Seltenes Quick-Time-Event: bevor die Wuerfe fallen, darf ein
+        # zufaelliger Mitspieler kurz eingreifen. Bewusst ausserhalb des
+        # Zeilensperren unten, damit ein bis zu 8 Sekunden langes Warten auf
+        # eine Antwort keine anderen, an diesem Spiel arbeitenden Anfragen
+        # blockiert (etwa die Aufloesung eines anderen Ortes).
+        advantage_action_id, helper_name = await self._maybe_offer_intervention(
+            game, turn, pending_actions
+        )
+
         game = await self._lock_game(game)
         turn.status = "resolving"
         settings = game.settings
@@ -405,6 +467,7 @@ class TurnService:
                 text=action.text,
                 target_ref=action.target_ref,
                 payload=dict(action.payload or {}),
+                stat_hint=stat_hints.get(action.id),
             )
             plan = ruleset.plan(
                 request, actor, difficulty=difficulty, complexity=complexity
@@ -443,6 +506,14 @@ class TurnService:
                     bonus=plan.check.bonus,
                     reason=plan.check.reason,
                 )
+                if action.id == advantage_action_id:
+                    second_roll = dice.roll(
+                        plan.check.notation,
+                        difficulty=plan.check.difficulty,
+                        bonus=plan.check.bonus,
+                        reason=plan.check.reason,
+                    )
+                    roll = dice.better(roll, second_roll)
                 self._session.add(
                     DiceRoll(
                         game_id=game.id,
@@ -491,6 +562,7 @@ class TurnService:
                 "degree": roll.degree if roll else "",
                 "total": roll.total if roll else None,
                 "difficulty": roll.difficulty if roll else None,
+                "helped_by": helper_name if action.id == advantage_action_id else None,
             }
             action.status = "resolved"
             action.outcome = outcome
@@ -516,6 +588,102 @@ class TurnService:
         await self._session.commit()
         await self._recorder.flush_to_clients(game.id)
         return results
+
+    async def _classify_custom_stat(self, text: str) -> str:
+        """Waehlt per KI ein passendes Attribut fuer eine frei formulierte Handlung.
+
+        Scheitert die Einschaetzung -- KI nicht erreichbar, unerwartete
+        Antwort, was auch immer --, gilt wie zuvor "intelligence". Eine
+        einzelne fehlgeschlagene Klassifikation darf die Handlung nicht
+        blockieren, deshalb wird hier bewusst breit abgefangen.
+        """
+        try:
+            request = LLMRequest(
+                system=prompts.STAT_PROMPT_SYSTEM,
+                prompt=prompts.build_stat_prompt(text),
+                max_tokens=60,
+                purpose="stat_classify",
+            )
+            response = await self._llm.complete(request)
+            stat = str(extract_json(response.text).get("stat", "")).strip().lower()
+            return stat if stat in _KNOWN_STATS else "intelligence"
+        except Exception:
+            logger.warning(
+                "Attribut-Einschaetzung fehlgeschlagen, nutze intelligence.", exc_info=True
+            )
+            return "intelligence"
+
+    async def _maybe_offer_intervention(
+        self, game: Game, turn: Turn, pending_actions: list[Action]
+    ) -> tuple[uuid.UUID | None, str | None]:
+        """Bietet selten einem zufaelligen Mitspieler an, kurz einzugreifen.
+
+        Nimmt jemand rechtzeitig an, bekommt eine zufaellig gewaehlte
+        Handlung dieses Zuges Vorteil (zwei Wuerfe, der bessere zaehlt).
+        Damit das ueberrascht, greift das nur bei einem kleinen Bruchteil
+        der Zuege und nie, wenn niemand sonst am selben Ort ist, der helfen
+        koennte.
+        """
+        if not pending_actions or random.random() >= _INTERVENTION_CHANCE:
+            return None, None
+
+        target = random.choice(pending_actions)
+        location_filter = (
+            Character.location_id.is_(None)
+            if turn.location_id is None
+            else Character.location_id == turn.location_id
+        )
+        stmt = (
+            sa.select(Player, Character.name)
+            .join(Character, Character.player_id == Player.id)
+            .where(
+                Player.game_id == game.id,
+                Player.id != target.player_id,
+                Player.is_active.is_(True),
+                Character.is_alive.is_(True),
+                location_filter,
+            )
+        )
+        candidates = list((await self._session.execute(stmt)).all())
+        if not candidates:
+            return None, None
+
+        helper, helper_char_name = random.choice(candidates)
+        target_character = (
+            await self._session.get(Character, target.character_id)
+            if target.character_id
+            else None
+        )
+        target_name = target_character.name if target_character else "jemandem"
+
+        intervention_id = interventions.create_waiter(helper.id)
+        await self._hub.publish(
+            game.id,
+            "intervention.offer",
+            {
+                "intervention_id": str(intervention_id),
+                "actor": target_name,
+                "action_text": target.text,
+                "timeout_seconds": _INTERVENTION_TIMEOUT_SECONDS,
+            },
+            audience_player_id=helper.id,
+        )
+        accepted = await interventions.wait_for_response(
+            intervention_id, timeout=_INTERVENTION_TIMEOUT_SECONDS
+        )
+        if not accepted:
+            return None, None
+
+        await self._recorder.record(
+            game,
+            type=ev.INTERVENTION_HELPED,
+            summary=f"{helper_char_name} greift {target_name} im letzten Moment unter die Arme.",
+            payload={"helper": helper_char_name, "actor": target_name},
+            turn_id=turn.id,
+            actor_type="character",
+            actor_id=helper.id,
+        )
+        return target.id, helper_char_name
 
     async def _narrate(
         self, game: Game, turn: Turn, results: list[dict[str, Any]]

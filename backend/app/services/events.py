@@ -34,6 +34,7 @@ PLAYER_LEFT = "player.left"
 CHARACTER_CREATED = "character.created"
 SUMMARY_CREATED = "summary.created"
 AUDIO_READY = "audio.ready"
+INTERVENTION_HELPED = "intervention.helped"
 
 
 async def increment_game_counter(

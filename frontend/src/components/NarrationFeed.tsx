@@ -5,7 +5,10 @@ import { useEffect, useRef } from "react";
 import type { DiceRoll, GameEvent, Narration } from "../lib/types";
 import { Badge } from "./ui";
 
-const DEGREE_LABEL: Record<string, { text: string; tone: "good" | "bad" | "warn" | "neutral" }> = {
+export const DEGREE_LABEL: Record<
+  string,
+  { text: string; tone: "good" | "bad" | "warn" | "neutral" }
+> = {
   critical_success: { text: "Kritischer Erfolg", tone: "good" },
   success: { text: "Erfolg", tone: "good" },
   partial: { text: "Teilerfolg", tone: "warn" },

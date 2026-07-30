@@ -1,10 +1,12 @@
 /** Lobby und Spieltisch. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ActionBar } from "../components/ActionBar";
 import { AudioControls } from "../components/AudioControls";
+import { DiceRollModal } from "../components/DiceRollModal";
+import { InterventionPrompt } from "../components/InterventionPrompt";
 import {
   CharacterSheet,
   InventoryPanel,
@@ -18,7 +20,7 @@ import { NarrationFeed } from "../components/NarrationFeed";
 import { Badge, Button, Card, ErrorNote, Field, Spinner, TextInput } from "../components/ui";
 import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
-import type { GameState, RealtimeMessage } from "../lib/types";
+import type { GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
 import { useGameState } from "../lib/useGameState";
 
 type Tab = "story" | "character" | "quests" | "world" | "log";
@@ -327,10 +329,60 @@ function TableView({
     }
   };
 
+  // Die Wuerfe des gerade wartenden Zuges (Phase A fertig, Erzaehlung noch
+  // nicht bestaetigt) -- der Rest von state.dice_rolls sind aeltere Wuerfe.
+  const resolvingRolls = useMemo(() => {
+    const turn = state.turn;
+    if (!turn || turn.status !== "resolving") return [];
+    return state.dice_rolls.filter((roll) => roll.turn_id === turn.id);
+  }, [state.turn, state.dice_rolls]);
+
+  // Ohne Wuerfe (z. B. eine uebersprungene Szene) gibt es nichts zu zeigen --
+  // dann direkt fortsetzen statt ein leeres Popup anzuzeigen.
+  const autoContinuedTurnRef = useRef<string | null>(null);
+  useEffect(() => {
+    const turn = state.turn;
+    if (!turn || turn.status !== "resolving" || resolvingRolls.length > 0) return;
+    if (autoContinuedTurnRef.current === turn.id) return;
+    autoContinuedTurnRef.current = turn.id;
+    void run(() => api.continueTurn(state.game.id, token, turn.id));
+    // run/token/state.game.id sollen den Effekt nicht erneut ausloesen --
+    // nur eine Statusaenderung des Zuges selbst zaehlt.
+  }, [state.turn, resolvingRolls.length]);
+
+  // Quick-Time-Event: ein an mich persoenlich gerichtetes Angebot bleibt
+  // sichtbar, bis es beantwortet ist oder die Zeit ablaeuft.
+  const [interventionOffer, setInterventionOffer] = useState<InterventionOffer | null>(null);
+  useEffect(() => {
+    if (
+      lastMessage?.type === "intervention.offer" &&
+      lastMessage.audience_player_id === state.me.id
+    ) {
+      setInterventionOffer(lastMessage.payload as unknown as InterventionOffer);
+    }
+  }, [lastMessage, state.me.id]);
+
   // Feste Hoehe mit eigenem Scrollbereich: so verdeckt die Handlungsleiste
   // niemals den Erzaehlstrang -- auch nicht bei langen Vorschlagslisten.
   return (
     <div className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden">
+      {resolvingRolls.length > 0 && (
+        <DiceRollModal
+          rolls={resolvingRolls}
+          characterNames={characterNames}
+          busy={busy}
+          onContinue={() => void run(() => api.continueTurn(state.game.id, token, state.turn!.id))}
+        />
+      )}
+
+      {interventionOffer && (
+        <InterventionPrompt
+          gameId={state.game.id}
+          token={token}
+          offer={interventionOffer}
+          onDone={() => setInterventionOffer(null)}
+        />
+      )}
       <div className="safe-top shrink-0">
         <StatusBar state={state} connected={connected} />
         {paused && (

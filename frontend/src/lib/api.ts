@@ -111,6 +111,19 @@ export const api = {
       { method: "POST", token },
     ),
 
+  continueTurn: (gameId: string, token: string, turnId?: string) =>
+    request<unknown>(
+      `/games/${gameId}/continue${turnId ? `?turn_id=${turnId}` : ""}`,
+      { method: "POST", token },
+    ),
+
+  respondIntervention: (gameId: string, token: string, interventionId: string, accepted: boolean) =>
+    request<unknown>(`/games/${gameId}/interventions/${interventionId}/respond`, {
+      method: "POST",
+      body: { accepted },
+      token,
+    }),
+
   renarrate: (gameId: string, token: string) =>
     request<unknown>(`/games/${gameId}/renarrate`, { method: "POST", token }),
 

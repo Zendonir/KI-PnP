@@ -194,14 +194,17 @@ class GameService:
 
         Bleibt die Gruppe zusammen, ist das fuer alle derselbe Zug wie
         heute. Trennt sie sich, bekommt jeder Ort seinen eigenen -- dieser
-        hier ist der, den *dieser* Spieler gerade bespielt.
+        hier ist der, den *dieser* Spieler gerade bespielt. Zaehlt auch
+        "resolving": Phase A ist dann fertig, aber die Erzaehlung wartet
+        noch auf die Bestaetigung des Wuerfelergebnisses -- fuer Spieler und
+        Frontend ist das weiterhin der aktuelle Zug an diesem Ort.
         """
         character = await self.character_of(player)
         if character is None:
             return None
         stmt = sa.select(Turn).where(
             Turn.game_id == game.id,
-            Turn.status == "collecting",
+            Turn.status.in_(("collecting", "resolving")),
             Turn.location_id.is_(None)
             if character.location_id is None
             else Turn.location_id == character.location_id,

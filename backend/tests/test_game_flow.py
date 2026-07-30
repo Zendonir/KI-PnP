@@ -275,8 +275,16 @@ class TestTurnLoop:
         state = (
             await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
         ).json()
-        assert state["turn"]["number"] == 2, "Nach allen Einreichungen startet Zug 2"
+        assert state["turn"]["status"] == "resolving", (
+            "Nach allen Einreichungen wartet der Zug auf die Bestaetigung des Wuerfelergebnisses"
+        )
         assert state["dice_rolls"], "Es muss gewuerfelt worden sein"
+
+        await client.post(f"/api/v1/games/{game_id}/continue", headers=auth(host["token"]))
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert state["turn"]["number"] == 2, "Nach der Bestaetigung startet Zug 2"
         assert len(state["narrations"]) >= 2
 
     async def test_dice_rolls_are_recorded_with_difficulty(
@@ -370,6 +378,7 @@ class TestEventLog:
             headers=auth(host["token"]),
         )
         await client.post(f"/api/v1/games/{game_id}/resolve", headers=auth(host["token"]))
+        await client.post(f"/api/v1/games/{game_id}/continue", headers=auth(host["token"]))
 
         async with container.database.session() as session:
             events = list(
@@ -550,6 +559,7 @@ class TestSplitParty:
             headers=auth(host["token"]),
         )
         assert first.status_code == 201, first.text
+        await client.post(f"/api/v1/games/{game_id}/continue", headers=auth(host["token"]))
 
         host_state = (
             await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
@@ -577,6 +587,7 @@ class TestSplitParty:
             headers=auth(guest["token"]),
         )
         assert second.status_code == 201, second.text
+        await client.post(f"/api/v1/games/{game_id}/continue", headers=auth(guest["token"]))
         guest_state = (
             await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
         ).json()
@@ -634,6 +645,7 @@ class TestSplitParty:
             json={"kind": "sneak", "text": "Ich horche in den Gang."},
             headers=auth(ben["token"]),
         )
+        await client.post(f"/api/v1/games/{game_id}/continue", headers=auth(ben["token"]))
         ben_state = (
             await client.get(f"/api/v1/games/{game_id}/state", headers=auth(ben["token"]))
         ).json()
@@ -733,6 +745,13 @@ class TestSplitParty:
         # Startort bleibt unberuehrt, obwohl dort noch niemand eingereicht hat.
         response = await client.post(
             f"/api/v1/games/{game_id}/resolve?turn_id={cave_turn_id}",
+            headers=auth(host["token"]),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == cave_turn_id, "Erst wartet der Zug auf die Bestaetigung"
+
+        response = await client.post(
+            f"/api/v1/games/{game_id}/continue?turn_id={cave_turn_id}",
             headers=auth(host["token"]),
         )
         assert response.status_code == 200, response.text

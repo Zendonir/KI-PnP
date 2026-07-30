@@ -30,6 +30,9 @@ ACTION_KINDS: tuple[str, ...] = (
     "custom",
 )
 
+# Die vier Grundattribute, gegen die gewuerfelt werden kann.
+KNOWN_STATS: tuple[str, ...] = ("strength", "dexterity", "intelligence", "charisma")
+
 DIFFICULTY_TARGETS: dict[str, int] = {
     "story": 8,
     "easy": 10,
@@ -77,6 +80,10 @@ class ActionRequest:
     text: str
     target_ref: str | None = None
     payload: dict[str, object] = field(default_factory=dict)
+    stat_hint: str | None = None
+    """Von der KI vorgeschlagenes Attribut fuer eine frei formulierte
+    Handlung (kind == "custom"). Ungueltige oder fehlende Werte fallen auf
+    die feste Zuordnung nach Handlungsart zurueck."""
 
 
 @dataclass(slots=True)
@@ -229,7 +236,11 @@ class ClassicRuleSet:
                 )
             )
 
-        stat_key = self._STAT_FOR_KIND.get(kind, "intelligence")
+        stat_key = (
+            request.stat_hint
+            if request.stat_hint in KNOWN_STATS
+            else self._STAT_FOR_KIND.get(kind, "intelligence")
+        )
         target = DIFFICULTY_TARGETS.get(difficulty, DIFFICULTY_TARGETS["normal"])
         if complexity == "crunchy":
             target += 1

@@ -123,6 +123,7 @@ export interface Narration {
 
 export interface DiceRoll {
   id: string;
+  turn_id: string | null;
   character_id: string | null;
   notation: string;
   rolls: number[];
@@ -222,6 +223,14 @@ export interface RealtimeMessage {
   game_id: string;
   audience_player_id: string | null;
   payload: Record<string, unknown>;
+}
+
+/** Kurzfristiges Eingriffsangebot (Quick-Time-Event), payload von `intervention.offer`. */
+export interface InterventionOffer {
+  intervention_id: string;
+  actor: string;
+  action_text: string;
+  timeout_seconds: number;
 }
 
 export interface ApiErrorBody {

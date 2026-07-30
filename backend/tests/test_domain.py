@@ -64,6 +64,12 @@ class TestDice:
         result = dice.roll("1d20", difficulty=2, rng=AlwaysMin())
         assert result.degree == dice.CRITICAL_FAILURE
 
+    def test_better_picks_higher_total(self) -> None:
+        low = dice.roll("1d20", rng=random.Random(1))
+        high = dice.roll("1d20+10", rng=random.Random(1))
+        assert dice.better(low, high) is high
+        assert dice.better(high, low) is high
+
     def test_success_flag_matches_difficulty(self) -> None:
         result = dice.roll("1d20", difficulty=1, bonus=100, rng=random.Random(3))
         assert result.success is True
@@ -111,6 +117,29 @@ class TestRules:
         assert plan.check.stat == "strength"
         assert plan.check.bonus == 2
         assert plan.costs and plan.costs[0].stat == "stamina"
+
+    def test_stat_hint_overrides_kind_mapping(self) -> None:
+        """Eine frei formulierte Handlung ("custom") wuerfelt sonst immer auf
+        Intelligenz -- mit einem gueltigen stat_hint (von der KI-Einschaetzung
+        gesetzt) gilt stattdessen dieses Attribut."""
+        plan = ClassicRuleSet().plan(
+            ActionRequest(kind="custom", text="Ich greife an", stat_hint="strength"),
+            _actor(),
+            difficulty="normal",
+            complexity="light",
+        )
+        assert plan.check is not None
+        assert plan.check.stat == "strength"
+
+    def test_invalid_stat_hint_falls_back_to_kind_mapping(self) -> None:
+        plan = ClassicRuleSet().plan(
+            ActionRequest(kind="custom", text="Ich ueberlege", stat_hint="nonsense"),
+            _actor(),
+            difficulty="normal",
+            complexity="light",
+        )
+        assert plan.check is not None
+        assert plan.check.stat == "intelligence"
 
     def test_spell_requires_mana(self) -> None:
         actor = _actor(stats={"mana": StatView(1, 10), "intelligence": StatView(10)})
