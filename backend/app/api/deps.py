@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.container import Container
 from app.core.errors import AuthError, PermissionError_
-from app.core.security import TokenPayload, decode_token
+from app.core.security import (
+    OperatorTokenPayload,
+    TokenPayload,
+    decode_operator_token,
+    decode_token,
+)
 from app.db.models import Game, Player
 from app.realtime.hub import EventHub
 from app.services.character_service import CharacterService
@@ -129,3 +134,21 @@ async def require_host(principal: PrincipalDep) -> Principal:
 
 
 HostDep = Annotated[Principal, Depends(require_host)]
+
+
+@dataclass(slots=True)
+class OperatorPrincipal:
+    """Der authentifizierte Zugang zum installationsweiten Settings-Menue."""
+
+    token: OperatorTokenPayload
+
+
+async def get_operator_principal(
+    settings: SettingsDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> OperatorPrincipal:
+    """Prueft das Settings-Zugangstoken. Unabhaengig von Spieler-Token."""
+    return OperatorPrincipal(token=decode_operator_token(settings, parse_bearer(authorization)))
+
+
+OperatorDep = Annotated[OperatorPrincipal, Depends(get_operator_principal)]

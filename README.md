@@ -157,6 +157,7 @@ wichtigsten:
 | `AUDIO_KEEP_LAST` | wie viele Aufnahmen je Runde ihre Daten behalten |
 | `PUBLIC_BASE_URL` | Basis für Beitrittslinks und QR-Codes |
 | `JWT_SECRET` | Signatur der Spieler-Token — unbedingt ändern |
+| `SETTINGS_PASSWORD` | Kennwort für `/settings`; leer = Menü deaktiviert |
 | `SITE_ADDRESS` | Domain für automatisches HTTPS via Caddy |
 
 ### Sprachausgabe
@@ -192,6 +193,10 @@ Scheitert die Vertonung — kein Schlüssel, kein Guthaben, Dienst nicht
 erreichbar —, liest das Gerät die Erzählung mit seiner eigenen Stimme vor.
 Still bleibt es nur, wenn die Runde ohne Sprachausgabe angelegt wurde
 (`tts_enabled: false`) oder `TTS_PROVIDER=none` gesetzt ist.
+
+Stimme und Geschwindigkeit lassen sich, sofern `SETTINGS_PASSWORD` gesetzt
+ist, über `/settings` ändern — installationsweit und ohne Neustart; eine
+laufende Runde übernimmt die neue Einstellung bei der nächsten Erzählung.
 
 ## Bedienung
 

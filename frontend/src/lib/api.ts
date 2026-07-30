@@ -6,6 +6,7 @@ import type {
   Game,
   GameSettings,
   GameState,
+  RuntimeSettings,
   SessionResponse,
   Summary,
 } from "./types";
@@ -152,6 +153,21 @@ export const api = {
     }
     return URL.createObjectURL(await response.blob());
   },
+
+  adminStatus: () => request<{ enabled: boolean }>("/settings/status"),
+
+  adminLogin: (password: string) =>
+    request<{ token: string; expires_at: string }>("/settings/login", {
+      method: "POST",
+      body: { password },
+    }),
+
+  getAdminSettings: (token: string) => request<RuntimeSettings>("/settings", { token }),
+
+  updateAdminSettings: (
+    token: string,
+    payload: { tts_voice?: string | null; tts_speed?: number | null },
+  ) => request<RuntimeSettings>("/settings", { method: "PUT", body: payload, token }),
 };
 
 /** WebSocket-Adresse fuer die Echtzeit-Synchronisation. */

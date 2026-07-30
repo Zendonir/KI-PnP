@@ -57,6 +57,7 @@ docker login ghcr.io -u <github-benutzername>
    | `POSTGRES_PASSWORD` und `DATABASE_URL` | Datenbankkennwort, muss bei `db`, `backend` **und** `worker` identisch sein und darf nur Buchstaben, Ziffern, `-` und `_` enthalten (siehe unten) |
    | `PUBLIC_BASE_URL` | Adresse im Netz, z. B. `http://192.168.1.50:30080` — landet im QR-Code |
    | `JWT_SECRET` | eigenes Geheimnis, z. B. aus `openssl rand -hex 32` |
+   | `SETTINGS_PASSWORD` | eigenes Kennwort fürs Einstellungen-Menü (`/settings`), z. B. aus `openssl rand -hex 24`; leer = deaktiviert. Nur bei `backend` nötig |
    | `OPENAI_API_KEY` | Schlüssel für Spielleiter-KI und Sprachausgabe; bei `backend` und `worker` eintragen |
 
 4. Namen vergeben (etwa `ki-pnp`) und installieren
@@ -182,7 +183,9 @@ in der App-Oberfläche *Update* bzw. das Image von Hand erneut ziehen.
 Reverse Proxy mit TLS davor (etwa Traefik oder Nginx Proxy Manager auf
 demselben Server). Danach `PUBLIC_BASE_URL` auf die öffentliche Adresse
 setzen, sonst verweisen die Beitrittslinks weiterhin auf die interne IP.
-Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren.
+Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren. Das
+Einstellungen-Menü (`/settings`) ist durch `SETTINGS_PASSWORD` geschützt und
+profitiert vom selben TLS-Aufbau.
 
 ## Wenn etwas klemmt
 

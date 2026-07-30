@@ -86,7 +86,10 @@ export function HomePage() {
       <footer className="mt-auto text-center text-xs text-parchment/35">
         Die Datenbank ist die einzige Wahrheit. Jede Handlung wird dauerhaft protokolliert.
         <br />
-        <span className="text-parchment/25">{appVersion()}</span>
+        <span className="text-parchment/25">{appVersion()}</span>{" "}
+        <Link to="/settings" className="text-parchment/25 underline-offset-2 hover:underline">
+          Einstellungen
+        </Link>
       </footer>
     </main>
   );

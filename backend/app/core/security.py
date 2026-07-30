@@ -20,6 +20,11 @@ from app.core.errors import AuthError
 
 _JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
+OPERATOR_TOKEN_TTL_SECONDS = 60 * 60 * 12
+"""Kuerzer als die 30 Tage eines Spieler-Tokens -- ein hoeher privilegiertes,
+installationsweites Zugangsmittel. Deckt einen Abend samt Anpassung am
+Folgetag ab, ohne bei jeder Sitzung neu verlangt zu werden."""
+
 
 @dataclass(frozen=True, slots=True)
 class TokenPayload:
@@ -64,6 +69,43 @@ def decode_token(settings: Settings, token: str) -> TokenPayload:
             game_id=UUID(raw["gid"]),
             role=str(raw["role"]),
         )
+    except (KeyError, ValueError) as exc:
+        raise AuthError("Token unvollstaendig") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorTokenPayload:
+    """Entschluesselter Inhalt eines Settings-Zugangstokens."""
+
+    issued_at: datetime
+
+
+def create_operator_token(settings: Settings) -> str:
+    """Signiert ein Zugangstoken fuer das installationsweite Settings-Menue."""
+    now = datetime.now(UTC)
+    payload = {
+        "typ": "operator",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=OPERATOR_TOKEN_TTL_SECONDS)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_operator_token(settings: Settings, token: str) -> OperatorTokenPayload:
+    """Prueft und entschluesselt ein Settings-Zugangstoken.
+
+    Das ``typ``-Feld trennt diese Tokenart sauber von Spieler-Token (die es
+    nicht kennen) und umgekehrt, ohne dass ``decode_token`` etwas davon
+    wissen muss.
+    """
+    try:
+        raw = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError as exc:
+        raise AuthError("Token ungueltig oder abgelaufen") from exc
+    if raw.get("typ") != "operator":
+        raise AuthError("Falscher Token-Typ")
+    try:
+        return OperatorTokenPayload(issued_at=datetime.fromtimestamp(raw["iat"], UTC))
     except (KeyError, ValueError) as exc:
         raise AuthError("Token unvollstaendig") from exc
 

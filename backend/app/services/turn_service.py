@@ -48,6 +48,7 @@ from app.schemas.api import ActionSubmitRequest
 from app.services import events as ev
 from app.services.context import ContextBuilder
 from app.services.events import EventRecorder, increment_game_counter
+from app.services.runtime_settings import get_effective_tts
 from app.services.state_changes import StateChangeApplier
 from app.services.views import character_to_domain
 from app.tts.providers import SpeechRequest, TTSProvider
@@ -745,11 +746,14 @@ class TurnService:
         targets = list(settings.audio_targets or []) if settings else []
         target = targets[0] if targets else "browser"
 
+        effective = await get_effective_tts(self._session, self._settings)
+
         job = AudioJob(
             game_id=game.id,
             narration_id=narration.id,
             provider=self._tts.name,
-            voice=self._settings.tts_voice,
+            voice=effective.voice,
+            speed=effective.speed,
             target=target,
             text=narration.text,
             meta={"mood": mood},
@@ -762,7 +766,9 @@ class TurnService:
             return
 
         result = await self._tts.synthesize(
-            SpeechRequest(text=narration.text, voice=self._settings.tts_voice, mood=mood)
+            SpeechRequest(
+                text=narration.text, voice=effective.voice, speed=effective.speed, mood=mood
+            )
         )
         job.status = result.status
         job.url = result.url

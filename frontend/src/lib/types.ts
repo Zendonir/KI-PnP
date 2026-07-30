@@ -227,3 +227,14 @@ export interface RealtimeMessage {
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
 }
+
+/** Installationsweite Laufzeit-Einstellungen (Settings-Menue). Unabhaengig
+ * von `GameSettings`, die pro Runde gelten. */
+export interface RuntimeSettings {
+  tts_voice: string;
+  tts_speed: number;
+  tts_provider: string;
+  voice_source: "openai" | "custom";
+  known_voices: string[];
+  updated_at: string | null;
+}

@@ -103,6 +103,7 @@ async def process_once(container: Container, settings: Settings) -> int:
                     SpeechRequest(
                         text=job.text,
                         voice=job.voice,
+                        speed=job.speed,
                         mood=str((job.meta or {}).get("mood", "")),
                     )
                 )

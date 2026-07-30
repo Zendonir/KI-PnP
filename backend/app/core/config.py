@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_ttl_seconds: int = 60 * 60 * 24 * 30
 
+    settings_password: str = ""
+    """Sichert das installationsweite Einstellungen-Menue (/settings). Leer
+    = deaktiviert -- unabhaengig von Spieler-/Spielleiter-Token."""
+
     # --- KI ------------------------------------------------------------
     ai_provider: Literal["mock", "anthropic", "openai", "ollama"] = "mock"
     ai_model: str = "claude-opus-5"

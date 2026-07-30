@@ -43,6 +43,14 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   automatisch Teil davon. Bleibt die Gruppe zusammen, ändert sich nichts.
   Die Spielleitung sieht im Reiter *Verlauf* eine Übersicht aller
   gleichzeitig laufenden Orte und kann jeden gezielt auflösen.
+- Passwortgeschütztes Einstellungen-Menü (`/settings`), abgesichert über die
+  neue Umgebungsvariable `SETTINGS_PASSWORD` — installationsweit und
+  unabhängig von Spieler-/Spielleiter-Token, leer gelassen bleibt der
+  Bereich deaktiviert. Dort lassen sich die aktive TTS-Stimme (feste Auswahl
+  bei OpenAI, Freitext bei einem lokalen Dienst) und die Sprechgeschwindigkeit
+  ändern, auch während einer laufenden Runde: eine bereits wartende
+  Sprachausgabe wird noch mit den alten Werten fertig, die nächste neu
+  entstehende übernimmt die Änderung ganz ohne Neustart.
 - Versionsanzeige: `/api/health` nennt jetzt `version` und `git_sha`, die
   Startseite zeigt beides klein im Fußbereich. Damit lässt sich einem
   gezogenen `:latest`-Image ansehen, ob es tatsächlich einen neuen Stand

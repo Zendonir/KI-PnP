@@ -42,11 +42,31 @@ _MIME_TYPES = {
 # Laengere Erzaehltexte werden von manchen Diensten abgelehnt.
 _MAX_INPUT_CHARS = 4000
 
+# Aktuell dokumentierte OpenAI-Stimmen (platform.openai.com/docs/guides/
+# text-to-speech). OpenAI ergaenzt gelegentlich neue -- eine spaetere
+# Aktualisierung bleibt dank dieser einen Konstante eine Ein-Zeilen-Aenderung.
+KNOWN_OPENAI_VOICES = (
+    "alloy",
+    "ash",
+    "ballad",
+    "cedar",
+    "coral",
+    "echo",
+    "fable",
+    "marin",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+    "verse",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SpeechRequest:
     text: str
     voice: str = ""
+    speed: float | None = None
     mood: str = ""
 
 
@@ -172,6 +192,8 @@ class OpenAISpeechProvider:
         # gelegentlich ab, deshalb nur bei Bedarf.
         if request.mood and not self._is_local:
             payload["instructions"] = f"Sprich als Spielleiter, Stimmung: {request.mood}."
+        if request.speed is not None:
+            payload["speed"] = request.speed
 
         try:
             response = await self._client.post("/audio/speech", json=payload)
@@ -180,9 +202,14 @@ class OpenAISpeechProvider:
 
         if response.status_code >= 400:
             detail = response.text[:300]
-            # Ein unbekanntes Feld soll den Auftrag nicht kosten.
-            if "instructions" in detail and "instructions" in payload:
-                payload.pop("instructions")
+            # Ein unbekanntes optionales Feld soll den Auftrag nicht kosten --
+            # manche lokalen Dienste kennen "instructions" oder "speed" nicht.
+            unknown_fields = [
+                field for field in ("instructions", "speed") if field in payload and field in detail
+            ]
+            if unknown_fields:
+                for field in unknown_fields:
+                    payload.pop(field, None)
                 try:
                     response = await self._client.post("/audio/speech", json=payload)
                 except httpx.HTTPError as exc:

@@ -41,6 +41,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       JWT_SECRET: ${JWT_SECRET:-bitte-in-produktion-aendern}
+      SETTINGS_PASSWORD: ${SETTINGS_PASSWORD:-}
       AI_PROVIDER: ${AI_PROVIDER:-mock}
       AI_MODEL: ${AI_MODEL:-claude-opus-5}
       AI_EFFORT: ${AI_EFFORT:-high}

@@ -314,3 +314,36 @@ class AdminKickRequest(Schema):
 class OkResponse(Schema):
     ok: bool = True
     message: str = ""
+
+
+# --- Installationsweite Einstellungen ------------------------------------
+
+
+class SettingsStatusOut(Schema):
+    enabled: bool
+
+
+class SettingsLoginRequest(Schema):
+    password: str = Field(min_length=1, max_length=200)
+
+
+class SettingsLoginOut(Schema):
+    token: str
+    expires_at: datetime
+
+
+VoiceSource = Literal["openai", "custom"]
+
+
+class RuntimeSettingsOut(Schema):
+    tts_voice: str
+    tts_speed: float
+    tts_provider: str
+    voice_source: VoiceSource
+    known_voices: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class RuntimeSettingsUpdateRequest(Schema):
+    tts_voice: str | None = Field(default=None, max_length=60)
+    tts_speed: float | None = Field(default=None, ge=0.25, le=4.0)

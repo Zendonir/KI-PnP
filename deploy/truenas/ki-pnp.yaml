@@ -83,6 +83,12 @@ services:
       # Eine spaetere Aenderung meldet alle Spieler ab.
       JWT_SECRET: bitte-eigenes-geheimnis-eintragen
 
+      # >>> ANPASSEN: eigenes Kennwort fuer das Einstellungen-Menue (/settings),
+      #     z. B. erzeugt mit openssl rand -hex 24. Leer gelassen bleibt der
+      #     Bereich deaktiviert. Nur beim Backend noetig -- der Worker hat
+      #     keine eigene API dafuer.
+      SETTINGS_PASSWORD: ""
+
       # --- Spielleiter-KI ------------------------------------------------
       # >>> ANPASSEN: OpenAI-Schluessel eintragen.
       # Ohne Schluessel faellt die Anwendung auf den Offline-Spielleiter
