@@ -16,11 +16,18 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   nichts automatisch abgesendet. Nur sichtbar, wenn der Browser die API
   unterstuetzt (u. a. Chrome/Edge; bei fehlender Unterstuetzung bleibt nur
   das Tastaturfeld).
-- Weltbild-Abriss in der Lobby: noch vor der Charaktererstellung steht ganz
-  oben eine kurze, aus den bei der Rundenerstellung gewaehlten Einstellungen
-  (Genre, Welt, Ton, Schwierigkeitsgrad, Spielstil) zusammengesetzte
-  Zusammenfassung dessen, was die Runde erwartet — ohne zusaetzlichen
-  KI-Aufruf.
+- Von der KI erzeugte Weltvorschau: direkt bei der Rundenerstellung schreibt
+  die KI aus den gewaehlten Einstellungen eine kurze, bewusst grobe Vorschau
+  (2-4 Saetze) auf die kommende Welt, die ganz oben in der Lobby steht --
+  noch vor der eigentlichen Weltentstehung, damit Spieler wissen, was sie
+  erwartet, wenn sie ihren Charakter bauen. Schlaegt der Aufruf fehl (die
+  Rundenerstellung wird dadurch nie blockiert), zeigt die Lobby ersatzweise
+  weiterhin den zuvor eingefuehrten, rein lokal aus den Einstellungen
+  zusammengesetzten Weltbild-Abriss.
+- Ausschweiflicherer Weltaufbau beim Rundenstart: die KI legt jetzt deutlich
+  mehr schon zu Beginn fest (mehrere Orte, mehrere NSC mit eigenem Geheimnis,
+  eine Haupt- und mehrere Nebenquests, oeffentliche wie geheime Fakten),
+  statt vieles erst waehrend des Spiels improvisieren zu muessen.
 - Gruppenereignisse: eine Handlung laesst sich beim Absenden als
   Gruppenereignis markieren ("Wir gehen zur Hoehle."). Andere aktive
   Personen am selben Ort bekommen ein Angebot, mitzumachen. Wer zustimmt,

@@ -47,7 +47,7 @@ async def game_socket(
     subscription = await container.hub.subscribe(game_id, payload.player_id)
 
     async with container.database.session() as session:
-        games = GameService(session, settings, container.hub, EventRecorder(session))
+        games = GameService(session, settings, container.hub, EventRecorder(session), container.llm)
         player: Player | None = None
         try:
             game = await games.get(game_id)

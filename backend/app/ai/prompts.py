@@ -96,6 +96,35 @@ Text davor oder danach: {"fit": "good|poor|auto_fail"}
 """
 
 
+PREMISE_SYSTEM = """\
+Du hilfst dabei, eine neue Pen-&-Paper-Runde vorzustellen, noch bevor die
+eigentliche Welt entsteht. Deine einzige Aufgabe: aus den gewaehlten
+Einstellungen eine kurze, grobe Vorschau auf die kommende Welt schreiben,
+die den Spielern vor der Charaktererstellung Orientierung gibt.
+
+Regeln:
+1. Bleibe bewusst grob und atmosphaerisch -- Genre, Ton, Ausgangslage.
+2. Erfinde keine konkreten Orte, Namen, NSC oder Fakten. Die eigentliche
+   Welt mit Orten, NSC und Quests entsteht unabhaengig davon separat, sobald
+   die Runde tatsaechlich startet; nichts hier darf ihr spaeter
+   widersprechen.
+3. Zwei bis vier Saetze, keine Aufzaehlung.
+4. Antworte ausschliesslich mit einem einzigen JSON-Objekt, ohne
+   erklaerenden Text davor oder danach.
+"""
+
+
+def build_premise_prompt(settings: dict[str, Any]) -> str:
+    """Auftrag: kurze Weltvorschau vor der Charaktererstellung."""
+    payload = json.dumps(settings, ensure_ascii=False, indent=2, default=str)
+    return (
+        "## Gewaehlte Einstellungen\n```json\n"
+        + payload
+        + "\n```\n\n## Auftrag\nSchreibe die Vorschau.\n\n"
+        '## Antwortformat (JSON)\n{"premise": "..."}\n'
+    )
+
+
 def build_stat_fit_prompt(text: str, stat: str) -> str:
     """Auftrag: Passung von Handlung und selbst gewaehltem Attribut beurteilen."""
     return (
@@ -116,10 +145,16 @@ def build_world_prompt(context: dict[str, Any]) -> str:
     return _compose(
         context,
         task=(
-            "Erzeuge den Auftakt der Kampagne: eine kurze Weltbeschreibung, die erste Szene, "
-            "mindestens zwei Orte, mindestens einen NSC mit Geheimnis, eine Hauptquest sowie "
-            "die dazugehoerigen Fakten und Wissenseintraege. Platziere alle Charaktere per "
-            "'character.move' am Startort. Gib jedem Charakter vier Handlungsvorschlaege."
+            "Erzeuge den Auftakt der Kampagne. Sei dabei bewusst ausschweifend: lege "
+            "moeglichst viel schon jetzt als 'changes' fest, statt es spaeter waehrend "
+            "des Spiels improvisieren zu muessen. Konkret mindestens: vier Orte (nicht "
+            "nur der Startort -- auch benachbarte, noch unentdeckte Orte fuer spaetere "
+            "Erkundung), drei NSC mit je eigenem Geheimnis oder Interesse, eine "
+            "Hauptquest sowie zwei weitere Nebenquests, und mehrere Fakten (oeffentliche "
+            "Ausgangslage UND geheime Hintergruende, die spaeter aufgedeckt werden "
+            "koennen). Dazu eine kurze Weltbeschreibung und die erste Szene. Platziere "
+            "alle Charaktere per 'character.move' am Startort. Gib jedem Charakter vier "
+            "Handlungsvorschlaege."
         ),
         extra=(
             'Zusaetzliches Feld: "world_summary" (2-3 Saetze).\n'

@@ -235,7 +235,9 @@ function LobbyView({
         {error && <ErrorNote>{error}</ErrorNote>}
 
         <Card title="Worum geht es?">
-          <p className="text-sm text-parchment/80">{buildWorldTeaser(state.game.settings)}</p>
+          <p className="text-sm text-parchment/80">
+            {state.game.premise?.trim() || buildWorldTeaser(state.game.settings)}
+          </p>
         </Card>
 
         <Card title="Mitspieler einladen">

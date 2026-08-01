@@ -31,6 +31,10 @@ export interface Game {
   current_turn_number: number;
   created_at: string;
   settings: GameSettings;
+  /** Von der KI bei der Rundenerstellung erzeugte kurze Weltvorschau (2-4
+   * Saetze). Kann fehlen, wenn der Aufruf misslang -- dann faellt die
+   * Lobby auf `buildWorldTeaser(settings)` zurueck. */
+  premise: string | null;
 }
 
 export interface Player {

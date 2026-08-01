@@ -76,6 +76,7 @@ class GameOut(Schema):
     current_turn_number: int
     created_at: datetime
     settings: GameSettingsOut
+    premise: str | None = None
 
 
 class GameCreateRequest(Schema):

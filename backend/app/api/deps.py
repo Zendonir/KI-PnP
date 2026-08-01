@@ -60,9 +60,13 @@ RecorderDep = Annotated[EventRecorder, Depends(get_recorder)]
 
 
 def get_game_service(
-    session: SessionDep, settings: SettingsDep, hub: HubDep, recorder: RecorderDep
+    session: SessionDep,
+    settings: SettingsDep,
+    hub: HubDep,
+    recorder: RecorderDep,
+    container: ContainerDep,
 ) -> GameService:
-    return GameService(session, settings, hub, recorder)
+    return GameService(session, settings, hub, recorder, container.llm)
 
 
 def get_turn_service(

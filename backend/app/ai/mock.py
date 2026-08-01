@@ -67,6 +67,7 @@ class MockLLMProvider:
             "turn": self._build_turn,
             "summary": self._build_summary,
             "character": self._build_character,
+            "premise": self._build_premise,
         }
         builder = builders.get(request.purpose, self._build_turn)
         return LLMResponse(text=json.dumps(builder(context), ensure_ascii=False), model="mock")
@@ -97,12 +98,19 @@ class MockLLMProvider:
         settings = context.get("settings", {}) if isinstance(context, dict) else {}
         genre = str(settings.get("genre", "fantasy"))
         world = str(settings.get("world") or "Die Grenzlande von Aschenfurt")
-        location = f"{world} - Marktplatz"
-        npc = "Hedda Vorn"
+        market = f"{world} - Marktplatz"
+        cistern = f"{world} - Alte Zisterne"
+        quarter = f"{world} - Handelsviertel"
+        gate = f"{world} - Nordtor"
+        healer, trader, priest = "Hedda Vorn", "Joran Kessel", "Pater Ilwyn"
+        # Bewusst ausschweifend: mehr Orte, NSC, Neben-Quests und Fakten als
+        # unbedingt fuer die erste Szene noetig, damit spaeteren Zuegen
+        # bereits Vorhandenes zur Verfuegung steht statt improvisiert werden
+        # zu muessen (Auftrag in prompts.build_world_prompt).
         changes: list[dict[str, Any]] = [
             {
                 "op": "location.create",
-                "name": location,
+                "name": market,
                 "description": (
                     f"Ein Platz im Zentrum von {world}. Der Brunnen ist trocken, "
                     "die Staende sind halb abgebaut."
@@ -112,19 +120,55 @@ class MockLLMProvider:
             },
             {
                 "op": "location.create",
-                "name": f"{world} - Alte Zisterne",
+                "name": cistern,
                 "description": "Unter dem Marktplatz, nur ueber einen schmalen Schacht erreichbar.",
                 "discovered": False,
                 "reason": "Ziel der ersten Quest",
             },
             {
+                "op": "location.create",
+                "name": quarter,
+                "description": (
+                    "Enge Gassen mit verrammelten Laeden -- seit Tagen bleiben Karawanen aus."
+                ),
+                "discovered": False,
+                "reason": "Hintergrund fuer die Nebenquest um ausbleibende Lieferungen",
+            },
+            {
+                "op": "location.create",
+                "name": gate,
+                "description": "Das Nordtor der Stadt, dahinter beginnt die offene Strasse.",
+                "discovered": False,
+                "reason": "Weiterer Anknuepfungspunkt fuer spaetere Erkundung",
+            },
+            {
                 "op": "entity.create",
-                "name": npc,
+                "name": healer,
                 "kind": "npc",
                 "description": "Brunnenmeisterin, misstrauisch, weiss mehr, als sie zugibt.",
-                "location": location,
+                "location": market,
                 "data": {"attitude": "wachsam"},
-                "reason": "Auftraggeberin",
+                "reason": "Auftraggeberin der Hauptquest",
+            },
+            {
+                "op": "entity.create",
+                "name": trader,
+                "kind": "npc",
+                "description": (
+                    "Haendler im Handelsviertel, dessen Lieferungen seit Tagen ausbleiben."
+                ),
+                "location": quarter,
+                "data": {"attitude": "besorgt"},
+                "reason": "Auftraggeber der ersten Nebenquest",
+            },
+            {
+                "op": "entity.create",
+                "name": priest,
+                "kind": "npc",
+                "description": "Priester am Marktplatz, kennt alte Geschichten ueber die Zisterne.",
+                "location": market,
+                "data": {"attitude": "zurueckhaltend"},
+                "reason": "Auftraggeber der zweiten Nebenquest",
             },
             {
                 "op": "quest.create",
@@ -133,9 +177,29 @@ class MockLLMProvider:
                     "Findet heraus, warum der Brunnen von "
                     f"{world} seit sieben Tagen trocken liegt."
                 ),
-                "giver": npc,
+                "giver": healer,
                 "is_main": True,
                 "reason": "Einstiegsquest",
+            },
+            {
+                "op": "quest.create",
+                "title": "Vermisste Ware",
+                "description": (
+                    "Klaert, warum die Karawanen ins Handelsviertel nicht mehr ankommen."
+                ),
+                "giver": trader,
+                "is_main": False,
+                "reason": "Nebenquest",
+            },
+            {
+                "op": "quest.create",
+                "title": "Der alte Fluch",
+                "description": (
+                    "Geht dem Geruecht nach, ein Fluch laste seit Generationen auf der Zisterne."
+                ),
+                "giver": priest,
+                "is_main": False,
+                "reason": "Nebenquest mit Bezug zum Geheimnis der Hauptquest",
             },
             {
                 "op": "fact.assert",
@@ -146,10 +210,27 @@ class MockLLMProvider:
             },
             {
                 "op": "fact.assert",
+                "key": "trade.blocked",
+                "statement": "Seit Tagen erreicht keine Karawane mehr das Handelsviertel.",
+                "visibility": "public",
+                "reason": "Ausgangslage der Nebenquest",
+            },
+            {
+                "op": "fact.assert",
                 "key": "cistern.blocked",
                 "statement": "Die Zisterne wurde absichtlich zugemauert.",
                 "visibility": "secret",
-                "reason": "Geheimnis hinter der Quest",
+                "reason": "Geheimnis hinter der Hauptquest",
+            },
+            {
+                "op": "fact.assert",
+                "key": "curse.rumor",
+                "statement": (
+                    "Ein alter Fluch soll auf der Zisterne liegen -- deshalb wurde sie "
+                    "einst versiegelt."
+                ),
+                "visibility": "secret",
+                "reason": "Geheimnis hinter der Nebenquest um den Fluch",
             },
             {
                 "op": "knowledge.grant",
@@ -161,9 +242,17 @@ class MockLLMProvider:
             },
             {
                 "op": "knowledge.grant",
-                "subject": npc,
+                "subject": healer,
                 "subject_type": "entity",
                 "content": "Hedda hat gesehen, wie nachts Steine in die Zisterne geschafft wurden.",
+                "certainty": "truth",
+                "reason": "NSC-Wissen",
+            },
+            {
+                "op": "knowledge.grant",
+                "subject": priest,
+                "subject_type": "entity",
+                "content": "Pater Ilwyn kennt die alte Geschichte vom Fluch der Zisterne.",
                 "certainty": "truth",
                 "reason": "NSC-Wissen",
             },
@@ -173,7 +262,7 @@ class MockLLMProvider:
                 {
                     "op": "character.move",
                     "character": name,
-                    "location": location,
+                    "location": market,
                     "reason": "Startaufstellung",
                 }
             )
@@ -188,11 +277,24 @@ class MockLLMProvider:
                 "und misstrauischen Blicken. Am Brunnen steht eine Frau mit verschraenkten "
                 "Armen und mustert euch, als waeret ihr die naechste schlechte Nachricht."
             ),
-            "public_events": [f"Die Gruppe erreicht {location}."],
+            "public_events": [f"Die Gruppe erreicht {market}."],
             "private_messages": [],
             "suggestions": self._suggestions(context),
             "changes": changes,
             "audio_hint": "ruhig, erwartungsvoll",
+        }
+
+    def _build_premise(self, context: dict[str, Any]) -> dict[str, Any]:
+        genre = str(context.get("genre") or "fantasy")
+        world = str(context.get("world") or "einer noch unbenannten Gegend")
+        tone = str(context.get("tone") or "heroic")
+        difficulty = str(context.get("difficulty") or "normal")
+        return {
+            "premise": (
+                f"Diese Runde entfuehrt euch in ein {genre}-Abenteuer rund um {world}. "
+                f"Der Ton ist {tone}, der Schwierigkeitsgrad {difficulty} -- alles Weitere "
+                "zeigt sich erst, sobald die Runde tatsaechlich beginnt."
+            )
         }
 
     def _build_turn(self, context: dict[str, Any]) -> dict[str, Any]:

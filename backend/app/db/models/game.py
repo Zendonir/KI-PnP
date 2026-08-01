@@ -39,6 +39,13 @@ class Game(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     KI, wann sie statt weiterer Atmosphaere eine konkrete Wendung liefern
     muss (siehe app.ai.prompts.build_turn_prompt)."""
     finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    premise: Mapped[str | None] = mapped_column(sa.Text(), nullable=True)
+    """Kurze, von der KI bei der Rundenerstellung erzeugte Vorschau auf die
+    kommende Welt (2-4 Saetze) -- dient nur der Orientierung fuer die
+    Charaktererstellung und ersetzt nicht die eigentliche Welterschaffung
+    (siehe TurnService.bootstrap_world). Kann leer sein, wenn der
+    KI-Aufruf fehlschlug; das Frontend faellt dann auf einen lokal
+    berechneten Text aus GameSettings zurueck."""
 
     settings: Mapped[GameSettings] = relationship(
         back_populates="game", uselist=False, cascade="all, delete-orphan", lazy="selectin"

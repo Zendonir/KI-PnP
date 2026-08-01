@@ -99,6 +99,14 @@ class TestLobby:
         assert session["player"]["role"] == "host"
         assert session["token"]
 
+    async def test_create_returns_a_world_premise(self, client: AsyncClient) -> None:
+        """Noch vor der Charaktererstellung soll eine kurze Weltvorschau
+        stehen, damit Spieler wissen, was sie erwartet (siehe
+        GameService._generate_premise)."""
+        session = await _create_game(client)
+        assert session["game"]["premise"]
+        assert "aschenfurt" in session["game"]["premise"].lower()
+
     async def test_qr_code_is_svg(self, client: AsyncClient) -> None:
         session = await _create_game(client)
         response = await client.get(f"/api/v1/games/code/{session['game']['code']}/qr.svg")
@@ -231,6 +239,26 @@ class TestGameStart:
         assert state["locations"], "Die Welt braucht mindestens einen entdeckten Ort"
         assert state["quests"], "Es muss eine Startquest geben"
         assert state["turn"]["my_suggestions"], "Jeder Charakter braucht Handlungsvorschlaege"
+
+    async def test_world_bootstrap_is_elaborate(
+        self, started_game: dict[str, Any], container: Container
+    ) -> None:
+        """Der Weltaufbau soll ausschweifend sein: mehr als das noetige
+        Minimum, damit spaetere Zuege auf Vorhandenem aufbauen koennen,
+        statt improvisieren zu muessen (siehe prompts.build_world_prompt).
+        Orte werden Spielern erst nach Entdeckung angezeigt (state.locations
+        zeigt darum bewusst nur den Startort) -- die Fuelle wird deshalb
+        direkt in der Datenbank geprueft, nicht ueber den Spielzustand."""
+        state = started_game["state"]
+        assert len(state["entities"]) >= 3
+        assert len(state["quests"]) >= 3
+
+        game_id = uuid.UUID(started_game["game_id"])
+        async with container.database.session() as session:
+            total_locations = (
+                await session.execute(sa.select(Location).where(Location.game_id == game_id))
+            ).scalars().all()
+        assert len(total_locations) >= 4
 
     async def test_characters_are_placed(self, started_game: dict[str, Any]) -> None:
         for character in started_game["state"]["characters"]:

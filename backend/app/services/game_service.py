@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import prompts
+from app.ai.base import LLMProvider, LLMRequest, extract_json
 from app.core.config import Settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.security import create_join_code, create_token
@@ -55,6 +59,21 @@ from app.services.events import EventRecorder, load_recent_events
 from app.services.turn_service import expected_player_ids
 from app.services.views import character_to_out
 
+logger = logging.getLogger(__name__)
+
+_PREMISE_SETTINGS_KEYS = (
+    "genre",
+    "world",
+    "difficulty",
+    "duration",
+    "rule_complexity",
+    "play_style",
+    "tone",
+    "campaign_type",
+)
+"""Nur die erzaehlerisch relevanten Einstellungen gehen in den Vorschau-Prompt --
+technische Felder (TTS, KI-Anbieter, ...) haben dort nichts verloren."""
+
 
 class GameService:
     """Anwendungsfaelle rund um eine Spielrunde."""
@@ -65,11 +84,13 @@ class GameService:
         settings: Settings,
         hub: EventHub,
         recorder: EventRecorder,
+        llm: LLMProvider,
     ) -> None:
         self._session = session
         self._settings = settings
         self._hub = hub
         self._recorder = recorder
+        self._llm = llm
 
     # -- Erstellen und Beitreten -----------------------------------------
 
@@ -86,6 +107,7 @@ class GameService:
             summary_every_n_events=self._settings.summary_every_n_events,
             **payload,
         )
+        game.premise = await self._generate_premise(payload)
         host = Player(game_id=game.id, name=request.host_name.strip(), role="host")
         self._session.add(host)
         await self._session.flush()
@@ -156,6 +178,32 @@ class GameService:
             self._settings, player_id=player.id, game_id=game.id, role=player.role
         )
         return game, player, token
+
+    async def _generate_premise(self, settings_payload: dict[str, Any]) -> str | None:
+        """Kurze Vorschau auf die kommende Welt, noch vor der eigentlichen
+        Welterschaffung (siehe TurnService.bootstrap_world). Rein
+        informativ fuer die Charaktererstellung -- ein fehlgeschlagener
+        Aufruf darf die Rundenerstellung nie blockieren, das Frontend
+        faellt dann auf einen lokal berechneten Text zurueck.
+        """
+        narrative_settings = {
+            key: settings_payload[key] for key in _PREMISE_SETTINGS_KEYS if key in settings_payload
+        }
+        try:
+            request = LLMRequest(
+                system=prompts.PREMISE_SYSTEM,
+                prompt=prompts.build_premise_prompt(narrative_settings),
+                max_tokens=400,
+                purpose="premise",
+            )
+            response = await self._llm.complete(request)
+            premise = str(extract_json(response.text).get("premise", "")).strip()
+            return premise or None
+        except Exception:  # noqa: BLE001 - Rundenerstellung darf nie blockieren
+            logger.warning(
+                "Vorschau-Generierung fehlgeschlagen, Runde startet ohne.", exc_info=True
+            )
+            return None
 
     async def _unique_code(self) -> str:
         for _ in range(20):
