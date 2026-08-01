@@ -23,6 +23,7 @@ import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
 import type { GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
 import { useGameState } from "../lib/useGameState";
+import { buildWorldTeaser } from "../lib/worldTeaser";
 
 type Tab = "story" | "character" | "quests" | "world" | "log";
 
@@ -232,6 +233,10 @@ function LobbyView({
       <StatusBar state={state} connected={connected} />
       <div className="space-y-4 px-4 py-4">
         {error && <ErrorNote>{error}</ErrorNote>}
+
+        <Card title="Worum geht es?">
+          <p className="text-sm text-parchment/80">{buildWorldTeaser(state.game.settings)}</p>
+        </Card>
 
         <Card title="Mitspieler einladen">
           <div className="flex flex-col items-center gap-3">

@@ -9,6 +9,11 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- Weltbild-Abriss in der Lobby: noch vor der Charaktererstellung steht ganz
+  oben eine kurze, aus den bei der Rundenerstellung gewaehlten Einstellungen
+  (Genre, Welt, Ton, Schwierigkeitsgrad, Spielstil) zusammengesetzte
+  Zusammenfassung dessen, was die Runde erwartet — ohne zusaetzlichen
+  KI-Aufruf.
 - Gruppenereignisse: eine Handlung laesst sich beim Absenden als
   Gruppenereignis markieren ("Wir gehen zur Hoehle."). Andere aktive
   Personen am selben Ort bekommen ein Angebot, mitzumachen. Wer zustimmt,
