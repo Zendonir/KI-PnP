@@ -1,10 +1,13 @@
 /** Handlungsauswahl: Freitext, aufgeloest auf ein selbst gewaehltes Attribut. */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Character } from "../lib/types";
 import { CORE_STAT_LABELS, RESOURCE_POOL_KEYS } from "../lib/types";
 import { Button } from "./ui";
+
+const SpeechRecognitionCtor =
+  typeof window !== "undefined" ? window.SpeechRecognition ?? window.webkitSpeechRecognition : undefined;
 
 export function ActionBar({
   character,
@@ -27,6 +30,45 @@ export function ActionBar({
   const [markedItem, setMarkedItem] = useState<string | null>(null);
   const [groupEvent, setGroupEvent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const dictationBaseRef = useRef("");
+
+  useEffect(() => {
+    return () => recognitionRef.current?.stop();
+  }, []);
+
+  useEffect(() => {
+    if (hasSubmitted) recognitionRef.current?.stop();
+  }, [hasSubmitted]);
+
+  const toggleDictation = () => {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    if (!SpeechRecognitionCtor) return;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "de-DE";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    dictationBaseRef.current = freeText.trim();
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index += 1) {
+        transcript += event.results[index][0].transcript;
+      }
+      const combined = dictationBaseRef.current
+        ? `${dictationBaseRef.current} ${transcript}`
+        : transcript;
+      setFreeText(combined.trim());
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  };
 
   if (!character) {
     return (
@@ -89,6 +131,18 @@ export function ActionBar({
           placeholder="Was tust du?"
           className="min-h-11 flex-1 rounded-xl border border-ink-600 bg-ink-900 px-3 text-base outline-none focus:border-ember-500 disabled:opacity-50"
         />
+        {SpeechRecognitionCtor && (
+          <Button
+            variant="ghost"
+            disabled={disabled || busy}
+            onClick={toggleDictation}
+            title={listening ? "Aufnahme beenden" : "Diktieren"}
+            aria-label={listening ? "Aufnahme beenden" : "Diktieren"}
+            className={listening ? "animate-pulse !border-blood-500 !text-blood-400" : ""}
+          >
+            <span aria-hidden>{listening ? "⏹" : "🎤"}</span>
+          </Button>
+        )}
         <Button
           variant="ghost"
           disabled={disabled || busy}
@@ -99,6 +153,13 @@ export function ActionBar({
           <span aria-hidden>🧘</span>
         </Button>
       </div>
+
+      {listening && (
+        <p className="text-xs text-blood-400">
+          🎤 Aufnahme laeuft -- sprich deine Handlung, der Text bleibt danach bearbeitbar, bevor
+          du ihn abschickst.
+        </p>
+      )}
 
       <button
         type="button"

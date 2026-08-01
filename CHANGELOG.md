@@ -9,6 +9,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- Diktieren statt Tippen: ein Mikrofon-Knopf neben dem Freitextfeld nutzt
+  die browsereigene Spracherkennung (Web Speech API), um die Handlung per
+  Sprache statt Tastatur einzugeben. Der erkannte Text landet im normalen
+  Eingabefeld und bleibt vor dem Abschicken frei bearbeitbar -- es wird
+  nichts automatisch abgesendet. Nur sichtbar, wenn der Browser die API
+  unterstuetzt (u. a. Chrome/Edge; bei fehlender Unterstuetzung bleibt nur
+  das Tastaturfeld).
 - Weltbild-Abriss in der Lobby: noch vor der Charaktererstellung steht ganz
   oben eine kurze, aus den bei der Rundenerstellung gewaehlten Einstellungen
   (Genre, Welt, Ton, Schwierigkeitsgrad, Spielstil) zusammengesetzte
