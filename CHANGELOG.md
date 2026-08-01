@@ -9,6 +9,24 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- Sichtbarer Quest-Fortschritt: der Vermerk aus dem letzten `quest.update`
+  steht jetzt unter der Quest, samt Zug-Nummer. Bisher wurde er zwar
+  gespeichert, aber weder angezeigt noch je wieder gelesen -- auch die KI
+  sah im Folgezug nur "offen" und wusste nicht mehr, wo die Gruppe in der
+  Quest steht. Sie bekommt den Vermerk jetzt im Kontext und ist angehalten,
+  ihn bei jeder Beruehrung einer Quest fortzuschreiben.
+- Erfahrung waechst jetzt spuerbar: jede gewertete Probe bringt Erfahrung
+  (auch ein Fehlschlag bringt einen Punkt), ein abgeschlossener Auftrag
+  belohnt alle Beteiligten am Ort deutlich. Die Aufstiegsschwelle wurde von
+  `Stufe x 100` auf eine flachere Kurve gesenkt -- zuvor gab es Erfahrung
+  nur bei kritischen Erfolgen, ein Aufstieg war damit praktisch
+  unerreichbar. Das Charakterblatt zeigt den Fortschritt zur naechsten Stufe
+  als Balken.
+- Spannungsbogen: aus der bei der Erstellung gewaehlten Spieldauer leitet
+  sich ab, in welcher Phase die Runde steht (Aufbau, Verwicklung, Hoehepunkt,
+  Abschluss). Die KI bekommt daraus eine passende Anweisung -- gegen Ende
+  soll sie die Hauptquest zum Abschluss bringen, statt neue Nebenstraenge
+  zu eroeffnen.
 - Diktieren statt Tippen: ein Mikrofon-Knopf neben dem Freitextfeld nutzt
   die browsereigene Spracherkennung (Web Speech API), um die Handlung per
   Sprache statt Tastatur einzugeben. Der erkannte Text landet im normalen
@@ -140,6 +158,13 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Geändert
 
+- Der Stillstands-Zähler wertet Fortschritt jetzt strenger: nur noch
+  `quest.create`, `quest.update`, `location.discover` und `character.move`
+  setzen ihn zurück. Bisher genügte ein beliebiger `fact.assert` oder ein
+  dahergelaufener NSC — der Zähler ließ sich also mit reiner Atmosphäre
+  zurücksetzen, ohne dass sich für die Gruppe etwas bewegte. Genau das
+  fühlt sich am Spieltisch nach Festbeißen an: es passiert etwas, aber
+  nichts zählt.
 - Ereigniszähler (`event_seq`) und Zugzähler (`current_turn_number`) werden
   jetzt atomar in der Datenbank erhöht statt in Python gelesen und
   zurückgeschrieben. Nötig, seit mehrere Züge desselben Spiels gleichzeitig

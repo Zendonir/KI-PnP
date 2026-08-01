@@ -128,6 +128,10 @@ class CharacterOut(Schema):
     avatar: str
     level: int
     experience: int
+    experience_to_next_level: int = 0
+    """Erfahrung, die von der aktuellen Stufe zur naechsten noetig ist --
+    damit die Oberflaeche den Fortschritt als Balken zeigen kann, statt nur
+    eine nackte Zahl."""
     is_alive: bool
     conditions: list[str]
     location: str | None = None
@@ -288,6 +292,11 @@ class QuestOut(Schema):
     description: str
     status: str
     is_main: bool
+    note: str = ""
+    """Juengster Fortschrittsvermerk aus dem letzten quest.update -- macht
+    fuer die Gruppe sichtbar, wo sie in dieser Quest gerade steht."""
+    turn_number: int = 0
+    """Zug, in dem dieser Stand zuletzt fortgeschrieben wurde."""
 
 
 class LocationOut(Schema):

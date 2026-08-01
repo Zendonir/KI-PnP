@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Character, Inventory, InventoryItem, Location
-from app.domain.rules import CharacterView, StatView
+from app.domain.rules import CharacterView, StatView, experience_for_next_level
 from app.schemas.api import CharacterOut, InventoryEntryOut, StatOut
 
 
@@ -42,6 +42,7 @@ async def character_to_out(session: AsyncSession, character: Character) -> Chara
         avatar=character.avatar,
         level=character.level,
         experience=character.experience,
+        experience_to_next_level=experience_for_next_level(character.level),
         is_alive=character.is_alive,
         conditions=list(character.conditions or []),
         location=location_name,

@@ -297,11 +297,25 @@ class MockLLMProvider:
             )
         }
 
+    def _open_quest(self, context: dict[str, Any], *, main_only: bool = False) -> str | None:
+        """Titel einer noch offenen Quest aus dem Kontext, falls vorhanden."""
+        quests = context.get("quests")
+        if not isinstance(quests, list):
+            return None
+        for entry in quests:
+            if not isinstance(entry, dict) or not entry.get("title"):
+                continue
+            if main_only and not entry.get("is_main"):
+                continue
+            return str(entry["title"])
+        return None
+
     def _build_turn(self, context: dict[str, Any]) -> dict[str, Any]:
         results = context.get("action_results", [])
         lines: list[str] = []
         changes: list[dict[str, Any]] = []
         public_events: list[str] = []
+        had_success = False
 
         for entry in results if isinstance(results, list) else []:
             if not isinstance(entry, dict):
@@ -315,6 +329,7 @@ class MockLLMProvider:
             if degree in ("critical_success", "success"):
                 lines.append(f"{actor} hat Erfolg: {text}")
                 public_events.append(f"{actor}: {text} (Erfolg)")
+                had_success = True
                 changes.append(
                     {
                         "op": "knowledge.grant",
@@ -341,7 +356,8 @@ class MockLLMProvider:
             lines.append("Die Gruppe zoegert, und die Szene haelt den Atem an.")
 
         stall_streak = int(context.get("stall_streak") or 0)
-        if stall_streak >= STALL_ESCALATION_THRESHOLD:
+        escalating = stall_streak >= STALL_ESCALATION_THRESHOLD
+        if escalating:
             beat = self._random.choice(_PROGRESS_BEATS)
             changes.append(
                 {
@@ -354,6 +370,40 @@ class MockLLMProvider:
             )
         else:
             beat = self._random.choice(_BEATS)
+
+        # Quest-Stand fortschreiben. Der Vermerk ist im naechsten Zug die
+        # einzige Erinnerung daran, wo die Gruppe in der Quest steht -- ohne
+        # ihn begaenne auch der Offline-Spielleiter jede Quest neu. Bei einer
+        # Eskalation zaehlt das zusaetzlich als echter Fortschritt und setzt
+        # damit den Stillstands-Zaehler zurueck (siehe _PROGRESS_OPS).
+        phase = ""
+        arc = context.get("arc")
+        if isinstance(arc, dict):
+            phase = str(arc.get("phase") or "")
+
+        main_quest = self._open_quest(context, main_only=True)
+        if phase == "resolution" and main_quest:
+            changes.append(
+                {
+                    "op": "quest.update",
+                    "quest": main_quest,
+                    "status": "completed",
+                    "note": "Die Gruppe bringt die Sache zu Ende.",
+                    "reason": "Zeitrahmen der Runde erreicht -- Hauptquest abschliessen",
+                }
+            )
+        else:
+            quest = self._open_quest(context)
+            if quest and (had_success or escalating):
+                changes.append(
+                    {
+                        "op": "quest.update",
+                        "quest": quest,
+                        "status": "active",
+                        "note": beat if escalating else " ".join(lines[:1]),
+                        "reason": "Fortschritt in der laufenden Quest",
+                    }
+                )
 
         return {
             "scene_title": str(context.get("scene_title") or "Fortsetzung"),

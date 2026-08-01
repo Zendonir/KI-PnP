@@ -163,14 +163,56 @@ def build_world_prompt(context: dict[str, Any]) -> str:
     )
 
 
+ARC_INSTRUCTIONS: dict[str, str] = {
+    "setup": (
+        "Die Runde steht am Anfang ihres Bogens: lege Faeden aus, stelle "
+        "Personen und Orte vor, baue die Ausgangslage auf."
+    ),
+    "rising": (
+        "Die Runde ist in der Verwicklung: bringe die Hauptquest sichtbar "
+        "voran, erhoehe den Einsatz, decke Teilwahrheiten auf. Jeder Zug "
+        "soll die Gruppe erkennbar naeher an ihr Ziel oder tiefer in die "
+        "Verwicklung bringen."
+    ),
+    "climax": (
+        "Die Runde naehert sich dem Hoehepunkt: draenge auf die Entscheidung "
+        "zu, an der sich die Hauptquest entscheidet. Keine neuen, "
+        "unabhaengigen Nebenstraenge mehr -- fuehre bestehende zusammen."
+    ),
+    "resolution": (
+        "Der eingeplante Zeitrahmen dieser Runde ist erreicht oder "
+        "ueberschritten: fuehre die Hauptquest jetzt zu einem Ende. Loese "
+        "offene Faeden auf, statt neue zu eroeffnen."
+    ),
+}
+"""Anweisung je Phase des Spannungsbogens (siehe services.context.arc_phase).
+Ohne sie hat die KI keinen Zielhorizont und keinen Grund, eine Geschichte je
+zum Abschluss zu bringen -- sie kann beliebig lange in der Verwicklung
+verweilen."""
+
+_QUEST_PROGRESS_RULE = (
+    "Sobald eine Handlung eine Quest beruehrt, halte den neuen Stand per "
+    "'quest.update' fest -- mit einem konkreten 'note', der beschreibt, was "
+    "die Gruppe jetzt erreicht hat oder als naechstes braucht. Dieser Vermerk "
+    "ist im naechsten Zug deine einzige Erinnerung daran, wo die Gruppe in "
+    "der Quest steht; ohne ihn beginnst du sie faktisch von vorn."
+)
+
+
 def build_turn_prompt(context: dict[str, Any]) -> str:
     """Auftrag: Ergebnisse bewerten und die Geschichte fortsetzen."""
     task = (
         "Die Spieler haben gehandelt. Die Ergebnisse der Proben stehen unter "
         "'action_results' und sind bindend - erfinde keine anderen Ausgaenge. "
         "Erzaehle, was daraus folgt, und bereite die naechste Entscheidung vor. "
-        "Gib jedem lebenden Charakter drei bis fuenf Handlungsvorschlaege."
+        "Gib jedem lebenden Charakter drei bis fuenf Handlungsvorschlaege. "
+        + _QUEST_PROGRESS_RULE
     )
+    arc = context.get("arc")
+    if isinstance(arc, dict):
+        instruction = ARC_INSTRUCTIONS.get(str(arc.get("phase")))
+        if instruction:
+            task += f" {instruction}"
     stall_streak = int(context.get("stall_streak") or 0)
     if stall_streak >= STALL_ESCALATION_THRESHOLD:
         task += (

@@ -44,12 +44,19 @@ from app.db.models import (
     GroupProposalResponse,
     Narration,
     Player,
+    Quest,
     SceneSummary,
     Turn,
     TurnAck,
 )
+from app.domain import changes as ch
 from app.domain import dice
-from app.domain.rules import ActionRequest, get_ruleset
+from app.domain.rules import (
+    XP_MAIN_QUEST_COMPLETED,
+    XP_QUEST_COMPLETED,
+    ActionRequest,
+    get_ruleset,
+)
 from app.realtime.hub import EventHub
 from app.schemas.api import ActionSubmitRequest
 from app.services import events as ev
@@ -57,7 +64,7 @@ from app.services import interventions
 from app.services.context import ContextBuilder
 from app.services.events import EventRecorder, increment_game_counter, reset_game_counter
 from app.services.runtime_settings import get_effective_tts
-from app.services.state_changes import StateChangeApplier
+from app.services.state_changes import ChangeApplication, StateChangeApplier
 from app.services.views import character_to_domain
 from app.tts.providers import SpeechRequest, TTSProvider
 
@@ -79,17 +86,21 @@ _PROGRESS_OPS = frozenset(
     {
         "quest.create",
         "quest.update",
-        "location.create",
         "location.discover",
-        "entity.create",
-        "fact.assert",
         "character.move",
     }
 )
-"""'changes', die echten Erzaehl-Fortschritt bedeuten -- im Gegensatz zu
-z. B. reinen Stat-Anpassungen oder Beziehungswerten. Sobald eine davon in
-einem Zug tatsaechlich angewendet wurde, gilt stall_streak als
-zurueckgesetzt, unabhaengig vom Wuerfelergebnis (siehe _narrate)."""
+"""'changes', die die Geschichte nachweislich vorantreiben: eine Quest kommt
+voran oder kommt hinzu, ein neuer Ort wird tatsaechlich betreten oder
+entdeckt. Nur diese setzen stall_streak zurueck, unabhaengig vom
+Wuerfelergebnis (siehe _narrate).
+
+Bewusst *nicht* enthalten sind 'fact.assert', 'entity.create' und
+'location.create': damit liesse sich der Zaehler durch einen beliebigen
+Atmosphaere-Fakt, einen dahergelaufenen NSC oder einen bloss angelegten,
+noch gar nicht erreichbaren Ort zuruecksetzen, ohne dass sich fuer die
+Gruppe irgendetwas bewegt. Genau das fuehlt sich am Spieltisch nach
+Stillstand an -- es passiert etwas, aber nichts zaehlt."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -970,6 +981,68 @@ class TurnService:
         )
         return target.id, helper_char_name
 
+    async def _award_quest_experience(
+        self,
+        game: Game,
+        turn: Turn,
+        application: ChangeApplication,
+        character_ids: list[uuid.UUID],
+    ) -> None:
+        """Vergibt Erfahrung, wenn in diesem Zug eine Quest abgeschlossen wurde.
+
+        Der greifbarste Fortschrittsmoment einer Runde soll sich auch
+        mechanisch niederschlagen. Die Erfahrung bekommt, wer bei der
+        Aufloesung dieses Zuges am Ort dabei war -- nicht die ganze Runde,
+        denn bei getrennten Gruppen loest jeder Ort unabhaengig auf.
+        """
+        titles = [
+            str(entry.get("quest") or "")
+            for entry in application.accepted
+            if entry.get("op") == "quest.update" and entry.get("status") == "completed"
+        ]
+        if not titles or not character_ids:
+            return
+
+        amount = 0
+        for title in titles:
+            if not title.strip():
+                continue
+            quest = (
+                await self._session.execute(
+                    sa.select(Quest).where(
+                        Quest.game_id == game.id,
+                        sa.func.lower(Quest.title) == title.strip().lower(),
+                    )
+                )
+            ).scalars().first()
+            amount += (
+                XP_MAIN_QUEST_COMPLETED
+                if quest is not None and quest.is_main
+                else XP_QUEST_COMPLETED
+            )
+        if amount <= 0:
+            return
+
+        names = list(
+            (
+                await self._session.execute(
+                    sa.select(Character.name).where(Character.id.in_(character_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        applier = StateChangeApplier(self._session, game, self._recorder, turn_id=turn.id)
+        await applier.apply(
+            [
+                ch.GrantExperience(
+                    character=name, amount=amount, reason="Quest abgeschlossen"
+                )
+                for name in names
+            ],
+            source="rules",
+        )
+
     async def _narrate(
         self, game: Game, turn: Turn, results: list[dict[str, Any]]
     ) -> Turn:
@@ -1026,6 +1099,8 @@ class TurnService:
         # in jedem Fall zurueck, unabhaengig vom Wuerfelergebnis.
         if any(entry.get("op") in _PROGRESS_OPS for entry in application.accepted):
             await reset_game_counter(self._session, game, Game.stall_streak)
+
+        await self._award_quest_experience(game, turn, application, character_ids_before)
 
         turn.status = "completed"
         turn.resolved_at = utcnow()

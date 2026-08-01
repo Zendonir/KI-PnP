@@ -37,6 +37,7 @@ from app.db.models import (
     WorldEntity,
 )
 from app.domain import changes as ch
+from app.domain.rules import experience_for_next_level
 from app.services import events as ev
 from app.services.events import EventRecorder
 
@@ -340,8 +341,8 @@ class StateChangeApplier:
         character = await self._find_character(change.character)
         character.experience += change.amount
         levelled = ""
-        while character.experience >= character.level * 100:
-            character.experience -= character.level * 100
+        while character.experience >= experience_for_next_level(character.level):
+            character.experience -= experience_for_next_level(character.level)
             character.level += 1
             levelled = f" Stufenaufstieg auf {character.level}!"
         return f"{character.name} erhaelt {change.amount} Erfahrung.{levelled}"

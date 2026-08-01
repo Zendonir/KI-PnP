@@ -79,6 +79,8 @@ export interface Character {
   avatar: string;
   level: number;
   experience: number;
+  /** Erfahrung, die von der aktuellen Stufe zur naechsten noetig ist. */
+  experience_to_next_level: number;
   is_alive: boolean;
   conditions: string[];
   location: string | null;
@@ -189,6 +191,10 @@ export interface Quest {
   description: string;
   status: string;
   is_main: boolean;
+  /** Juengster Fortschrittsvermerk -- zeigt, wo die Gruppe in dieser Quest steht. */
+  note: string;
+  /** Zug, in dem dieser Stand zuletzt fortgeschrieben wurde. */
+  turn_number: number;
 }
 
 export interface WorldLocation {

@@ -16,7 +16,14 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from app.domain import changes as ch
-from app.domain.dice import CRITICAL_FAILURE, CRITICAL_SUCCESS, DiceResult
+from app.domain.dice import (
+    CRITICAL_FAILURE,
+    CRITICAL_SUCCESS,
+    FAILURE,
+    PARTIAL,
+    SUCCESS,
+    DiceResult,
+)
 
 # Standard-Handlungsarten, die das Frontend als Vorschlaege anbietet.
 ACTION_KINDS: tuple[str, ...] = (
@@ -45,6 +52,36 @@ DIFFICULTY_TARGETS: dict[str, int] = {
     "hard": 15,
     "deadly": 18,
 }
+
+XP_PER_DEGREE: dict[str, int] = {
+    CRITICAL_SUCCESS: 12,
+    SUCCESS: 6,
+    PARTIAL: 3,
+    FAILURE: 1,
+    CRITICAL_FAILURE: 1,
+}
+"""Erfahrung je Probenausgang. Auch ein Fehlschlag bringt einen Punkt: am
+Spieltisch soll sich jede gewagte Handlung nach einem Schritt anfuehlen,
+nicht nur die gelungene. Der Abstand zwischen den Stufen bleibt trotzdem
+deutlich, damit Erfolg sich lohnt."""
+
+XP_QUEST_COMPLETED = 40
+XP_MAIN_QUEST_COMPLETED = 100
+"""Erfahrung fuer die ganze Gruppe, wenn eine Quest abgeschlossen wird --
+der greifbarste Fortschrittsmoment einer Runde und deshalb bewusst ein
+Vielfaches einer einzelnen Probe."""
+
+
+def experience_for_next_level(level: int) -> int:
+    """Erfahrung, die von Stufe ``level`` zur naechsten noetig ist.
+
+    Bewusst flach gehalten: mit ~6 XP je gelungener Probe und 40 XP je
+    abgeschlossener Quest liegt der erste Aufstieg in Reichweite eines
+    Spielabends. Die fruehere Schwelle ``level * 100`` war zusammen mit
+    Erfahrung nur bei kritischen Erfolgen praktisch unerreichbar -- ein
+    Fortschrittskanal, den es zwar gab, den aber niemand je zu sehen bekam.
+    """
+    return 60 + (level - 1) * 40
 
 
 @dataclass(slots=True)
@@ -290,9 +327,20 @@ class ClassicRuleSet:
     def outcome_effects(
         self, request: ActionRequest, actor: CharacterView, result: DiceResult | None
     ) -> list[ch.StateChange]:
-        if result is None or result.degree not in (CRITICAL_FAILURE, CRITICAL_SUCCESS):
+        if result is None:
             return []
         effects: list[ch.StateChange] = []
+        experience = XP_PER_DEGREE.get(result.degree, 0)
+        if experience:
+            effects.append(
+                ch.GrantExperience(
+                    character=actor.name,
+                    amount=experience,
+                    reason=f"Probe: {result.degree}",
+                )
+            )
+        if result.degree not in (CRITICAL_FAILURE, CRITICAL_SUCCESS):
+            return effects
         if result.degree == CRITICAL_FAILURE and request.kind in ("attack", "sneak", "flee"):
             effects.append(
                 ch.AdjustStat(
@@ -307,10 +355,6 @@ class ClassicRuleSet:
                 ch.AdjustStat(
                     character=actor.name, stat="mana", delta=-2, reason="Magischer Patzer"
                 )
-            )
-        if result.degree == CRITICAL_SUCCESS:
-            effects.append(
-                ch.GrantExperience(character=actor.name, amount=10, reason="Kritischer Erfolg")
             )
         return effects
 

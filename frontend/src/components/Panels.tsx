@@ -67,6 +67,30 @@ export function CharacterSheet({ character }: { character: Character | null }) {
         ))}
       </div>
 
+      {character.experience_to_next_level > 0 && (
+        <div className="mt-3">
+          <div className="mb-1 flex justify-between text-xs text-parchment/50">
+            <span>Erfahrung</span>
+            <span className="tabular-nums">
+              {character.experience} / {character.experience_to_next_level}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-900">
+            <div
+              className="h-full rounded-full bg-ember-500 transition-[width]"
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.round(
+                    (character.experience / character.experience_to_next_level) * 100,
+                  ),
+                )}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {attributes.length > 0 && (
         <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
           {attributes.map((stat) => (
@@ -177,6 +201,14 @@ export function QuestPanel({ quests }: { quests: Quest[] }) {
               </div>
               {quest.description && (
                 <p className="mt-1 text-xs text-parchment/60">{quest.description}</p>
+              )}
+              {quest.note && (
+                <p className="mt-2 border-l-2 border-ember-500/50 pl-2 text-xs text-ember-400/90">
+                  {quest.note}
+                  {quest.turn_number > 0 && (
+                    <span className="text-parchment/40"> (Zug {quest.turn_number})</span>
+                  )}
+                </p>
               )}
             </li>
           ))}

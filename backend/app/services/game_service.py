@@ -554,6 +554,10 @@ class GameService:
                     description=quest.description,
                     status=quest.current_state.status if quest.current_state else "open",
                     is_main=quest.is_main,
+                    note=quest.current_state.note if quest.current_state else "",
+                    turn_number=(
+                        quest.current_state.turn_number if quest.current_state else 0
+                    ),
                 )
                 for quest in quests
                 if not quest.current_state or quest.current_state.visibility != "secret"
