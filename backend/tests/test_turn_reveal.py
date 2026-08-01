@@ -216,6 +216,36 @@ class TestAufdeckung:
         assert state["dice_rolls"] == []
         assert state["pending_reveal"]["revealed"] is True
 
+    async def test_double_ack_from_the_same_player_is_harmless(
+        self, client: AsyncClient, started_game: dict[str, Any]
+    ) -> None:
+        """Der Doppeltipp auf "Weiter" ist der Normalfall: das Fenster steht
+        seit dem Aufdeck-Fix schon waehrend der Erzaehlung offen. Ohne
+        Absicherung braeche die zweite Anfrage am Unique-Constraint."""
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+
+        for session in (host, guest):
+            await client.post(
+                f"/api/v1/games/{game_id}/actions",
+                json={"kind": "custom", "text": "Wir handeln.", "stat": "strength"},
+                headers=auth(session["token"]),
+            )
+
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        turn_id = state["pending_reveal"]["turn_id"]
+
+        for _ in range(3):
+            response = await client.post(
+                f"/api/v1/games/{game_id}/turns/{turn_id}/ack", headers=auth(host["token"])
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["pending_reveal"]["acknowledged_player_ids"] == [
+                host["player"]["id"]
+            ]
+
     async def test_ack_on_still_collecting_turn_is_rejected(
         self, client: AsyncClient, started_game: dict[str, Any]
     ) -> None:

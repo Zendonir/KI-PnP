@@ -26,6 +26,7 @@ from typing import Any
 
 import pydantic
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import prompts
@@ -604,8 +605,17 @@ class TurnService:
             )
             already = (await self._session.execute(exists_stmt)).scalar_one_or_none()
             if already is None:
-                self._session.add(TurnAck(turn_id=turn.id, player_id=player.id))
-                await self._session.flush()
+                # Der Doppeltipp auf "Weiter" ist der Normalfall, nicht die
+                # Ausnahme: das Aufdeck-Fenster steht jetzt schon waehrend
+                # der Erzaehlung offen, und zwei fast gleichzeitige Anfragen
+                # sehen beide "noch nicht bestaetigt". Ohne diesen
+                # Rueckfallpunkt bricht die zweite am Unique-Constraint --
+                # mit einem Fehler statt eines Achselzuckens.
+                try:
+                    async with self._session.begin_nested():
+                        self._session.add(TurnAck(turn_id=turn.id, player_id=player.id))
+                except IntegrityError:
+                    pass
 
             acked_stmt = sa.select(TurnAck.player_id).where(TurnAck.turn_id == turn.id)
             acked = set((await self._session.execute(acked_stmt)).scalars().all())
@@ -1052,8 +1062,6 @@ class TurnService:
         self, game: Game, turn: Turn, results: list[dict[str, Any]]
     ) -> Turn:
         """Phase B: KI erzaehlt, Backend validiert die Vorschlaege."""
-        game = await self._lock_game(game)
-
         # Wer zu diesem Zug gehoerte, bevor die KI etwas veraendert hat --
         # nicht nur, wer tatsaechlich eine Handlung eingereicht hat. Bei
         # einem von der Spielleitung erzwungenen Aufloesen (/resolve,
@@ -1089,6 +1097,15 @@ class TurnService:
             model=NarrationResponse,
             purpose="turn",
         )
+
+        # Erst jetzt sperren -- alles davor liest nur. Wuerde die Spielzeile
+        # schon vor dem KI-Aufruf gesperrt, blockierte sie fuer dessen ganze
+        # Dauer jede andere schreibende Anfrage an dieselbe Runde: den
+        # Zug eines unabhaengig laufenden Ortes ebenso wie eine
+        # Aufdeck-Bestaetigung, die seit Neuestem schon waehrend der
+        # Erzaehlung eintreffen kann. Phase A haelt es aus demselben Grund
+        # genauso (siehe _resolve_mechanics).
+        game = await self._lock_game(game)
 
         applier = StateChangeApplier(self._session, game, self._recorder, turn_id=turn.id)
         application = await applier.apply_raw(response.changes, source="ai")

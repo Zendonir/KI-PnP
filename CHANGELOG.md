@@ -158,6 +158,18 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Behoben
 
+- Die Spielzeile wird während der Erzählung nicht mehr gesperrt. Phase B
+  sperrte sie bisher *vor* dem KI-Aufruf und hielt sie über dessen ganze
+  Dauer — jede andere schreibende Anfrage an dieselbe Runde lief so lange
+  gegen die Sperre. Solange nur der Zug eines unabhängigen Ortes betroffen
+  war, fiel das kaum auf; seit eine Aufdeck-Bestätigung schon während der
+  Erzählung eintreffen kann, blockierten diese Anfragen und banden dabei
+  Datenbankverbindungen. Jetzt wird erst nach der KI-Antwort gesperrt,
+  genau wie Phase A es schon immer gehandhabt hat.
+- Ein doppelter Tipp auf „Weiter" im Würfelfenster brach am
+  Unique-Constraint der Bestätigungen ab. Das Fenster steht seit dem
+  Aufdeck-Fix deutlich länger offen, damit wurde aus dem Sonderfall der
+  Normalfall.
 - Würfelergebnisse erschienen weiterhin im Verlauf, bevor das Würfelfenster
   aufging. Ursache: die Würfe entstehen und werden am Ende von Phase A
   gespeichert, die Erzählung folgt erst nach dem KI-Aufruf mehrere Sekunden
