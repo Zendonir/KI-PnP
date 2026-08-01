@@ -156,6 +156,21 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
   sonst auf der Startseite „vlatest", während `/api/health` weiterhin die
   echte Paketversion nennt.
 
+### Behoben
+
+- Würfelergebnisse erschienen weiterhin im Verlauf, bevor das Würfelfenster
+  aufging. Ursache: die Würfe entstehen und werden am Ende von Phase A
+  gespeichert, die Erzählung folgt erst nach dem KI-Aufruf mehrere Sekunden
+  später — das Aufdeck-Fenster kannte aber nur *abgeschlossene* Züge. Genau
+  in dieser Lücke waren die Ergebnisse ungefiltert sichtbar. Der
+  Aufdeck-Zustand greift jetzt ab dem Moment, in dem die Würfe feststehen;
+  bestätigen lässt sich ebenfalls sofort, ohne auf die Erzählung zu warten.
+  Nebeneffekt: die Aufnahme wird jetzt erzeugt, während das Fenster schon
+  offen ist, statt erst danach.
+- Ein Zug ganz ohne Würfe (alle warten ab) wird sofort freigegeben. Ohne
+  Ergebnisse erscheint kein Aufdeck-Fenster, also hätte auch niemand
+  bestätigen können — die Erzählung wäre dauerhaft verborgen geblieben.
+
 ### Geändert
 
 - Der Stillstands-Zähler wertet Fortschritt jetzt strenger: nur noch

@@ -466,24 +466,30 @@ class GameService:
                 if my_character.location_id is None
                 else Turn.location_id == my_character.location_id
             )
-            last_completed = (
+            # Auch "resolving" und nicht erst "completed": die Wuerfel
+            # entstehen und committen bereits in Phase A, die Erzaehlung
+            # folgt erst nach dem KI-Aufruf mehrere Sekunden spaeter. Wuerde
+            # hier nur der abgeschlossene Zug zaehlen, waeren die Ergebnisse
+            # genau in diesem Fenster ungefiltert im Verlauf sichtbar --
+            # also vor dem Aufdeck-Fenster statt danach.
+            last_resolved = (
                 await self._session.execute(
                     sa.select(Turn)
                     .where(
                         Turn.game_id == game.id,
-                        Turn.status == "completed",
+                        Turn.status.in_(("resolving", "completed")),
                         pending_location_filter,
                     )
                     .order_by(Turn.number.desc())
                     .limit(1)
                 )
             ).scalars().first()
-            if last_completed is not None:
+            if last_resolved is not None:
                 acked = set(
                     (
                         await self._session.execute(
                             sa.select(TurnAck.player_id).where(
-                                TurnAck.turn_id == last_completed.id
+                                TurnAck.turn_id == last_resolved.id
                             )
                         )
                     )
@@ -491,11 +497,11 @@ class GameService:
                     .all()
                 )
                 expected = await expected_player_ids(
-                    self._session, game, last_completed.location_id
+                    self._session, game, last_resolved.location_id
                 )
                 pending_reveal = PendingRevealOut(
-                    turn_id=last_completed.id,
-                    revealed=last_completed.revealed_at is not None,
+                    turn_id=last_resolved.id,
+                    revealed=last_resolved.revealed_at is not None,
                     acknowledged_player_ids=sorted(acked),
                     expected_player_ids=sorted(expected),
                 )

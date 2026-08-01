@@ -590,9 +590,14 @@ class TurnService:
     # dem Rest der Gruppe weiter.
 
     async def acknowledge_turn(self, game: Game, turn: Turn, player: Player) -> Turn:
-        """Merkt sich, dass ein Spieler die Wuerfelergebnisse gesehen hat."""
-        if turn.status != "completed":
-            raise ConflictError("Dieser Zug ist noch nicht abgeschlossen.")
+        """Merkt sich, dass ein Spieler die Wuerfelergebnisse gesehen hat.
+
+        Schon ab "resolving" moeglich: die Wuerfel stehen am Ende von Phase A
+        fest, die Erzaehlung folgt erst nach dem KI-Aufruf. Wer die Ergebnisse
+        gesehen hat, soll nicht warten muessen, bis die Erzaehlung fertig ist.
+        """
+        if turn.status not in ("resolving", "completed"):
+            raise ConflictError("Fuer diesen Zug gibt es noch keine Ergebnisse.")
         if turn.revealed_at is None:
             exists_stmt = sa.select(TurnAck.id).where(
                 TurnAck.turn_id == turn.id, TurnAck.player_id == player.id
@@ -619,8 +624,8 @@ class TurnService:
         dass ein Mitspieler nicht mehr reagiert (App im Hintergrund,
         Verbindung weg) und die Runde sonst haengen bliebe.
         """
-        if turn.status != "completed":
-            raise ConflictError("Dieser Zug ist noch nicht abgeschlossen.")
+        if turn.status not in ("resolving", "completed"):
+            raise ConflictError("Fuer diesen Zug gibt es noch keine Ergebnisse.")
         if turn.revealed_at is None:
             await self._reveal_turn(game, turn)
             await self._session.commit()
@@ -1101,6 +1106,19 @@ class TurnService:
             await reset_game_counter(self._session, game, Game.stall_streak)
 
         await self._award_quest_experience(game, turn, application, character_ids_before)
+
+        # Ohne Wuerfelergebnisse gibt es nichts aufzudecken. Das
+        # Aufdeck-Fenster erscheint mangels Ergebnissen gar nicht erst, also
+        # koennte auch niemand bestaetigen -- die Erzaehlung bliebe sonst
+        # dauerhaft verborgen (etwa wenn die ganze Gruppe nur abwartet).
+        if turn.revealed_at is None:
+            has_rolls = (
+                await self._session.execute(
+                    sa.select(DiceRoll.id).where(DiceRoll.turn_id == turn.id).limit(1)
+                )
+            ).scalar_one_or_none() is not None
+            if not has_rolls:
+                await self._reveal_turn(game, turn)
 
         turn.status = "completed"
         turn.resolved_at = utcnow()

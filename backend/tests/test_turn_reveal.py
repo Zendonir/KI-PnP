@@ -153,6 +153,69 @@ class TestAufdeckung:
         )
         assert response.status_code == 403
 
+    async def test_rolls_are_already_pending_while_the_narration_is_still_running(
+        self, client: AsyncClient, started_game: dict[str, Any], monkeypatch: Any
+    ) -> None:
+        """Regression: die Wuerfel entstehen und committen am Ende von Phase A,
+        die Erzaehlung folgt erst nach dem KI-Aufruf mehrere Sekunden spaeter.
+        Solange 'pending_reveal' nur abgeschlossene Zuege kannte, waren die
+        Ergebnisse genau in diesem Fenster ungefiltert im Verlauf sichtbar --
+        also vor dem Aufdeck-Fenster statt danach."""
+        from app.services.turn_service import TurnService
+
+        async def _narration_still_running(
+            self: TurnService, game: Any, turn: Any, results: Any
+        ) -> Any:
+            return turn
+
+        monkeypatch.setattr(TurnService, "_narrate", _narration_still_running)
+
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+        for session in (host, guest):
+            response = await client.post(
+                f"/api/v1/games/{game_id}/actions",
+                json={"kind": "custom", "text": "Wir handeln.", "stat": "strength"},
+                headers=auth(session["token"]),
+            )
+            assert response.status_code == 201, response.text
+
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+
+        assert state["dice_rolls"], "Phase A muss bereits Wuerfe erzeugt haben"
+        pending = state["pending_reveal"]
+        assert pending is not None, "Ohne pending_reveal zeigt der Verlauf die Wuerfe sofort"
+        assert pending["revealed"] is False
+        assert {roll["turn_id"] for roll in state["dice_rolls"]} == {pending["turn_id"]}, (
+            "Die Wuerfe muessen zum zurueckgehaltenen Zug gehoeren, sonst filtert "
+            "die Oberflaeche sie nicht heraus"
+        )
+
+    async def test_turn_without_rolls_is_revealed_immediately(
+        self, client: AsyncClient, started_game: dict[str, Any]
+    ) -> None:
+        """Ohne Wuerfelergebnisse erscheint gar kein Aufdeck-Fenster -- also
+        koennte auch niemand bestaetigen. Ohne Sofort-Freigabe bliebe die
+        Erzaehlung dauerhaft verborgen."""
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+
+        for session in (host, guest):
+            response = await client.post(
+                f"/api/v1/games/{game_id}/actions",
+                json={"kind": "wait", "text": "Ich warte ab."},
+                headers=auth(session["token"]),
+            )
+            assert response.status_code == 201, response.text
+
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert state["dice_rolls"] == []
+        assert state["pending_reveal"]["revealed"] is True
+
     async def test_ack_on_still_collecting_turn_is_rejected(
         self, client: AsyncClient, started_game: dict[str, Any]
     ) -> None:
