@@ -185,6 +185,12 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Geändert
 
+- Log-Rauschen durch den Gesundheitscheck reduziert: `GET /api/health`
+  (alle paar Sekunden von Docker/Reverse-Proxy abgefragt) erscheint jetzt
+  nur noch bei einem Zustandswechsel im Log — der erste erfolgreiche
+  Aufruf, ein Fehlschlag und die anschließende Erholung. Solange der
+  Zustand unverändert bleibt (dauerhaft "200 OK"), wird die Zeile
+  unterdrückt. Alle anderen Anfragen sind davon unberührt.
 - Der Stillstands-Zähler wertet Fortschritt jetzt strenger: nur noch
   `quest.create`, `quest.update`, `location.discover` und `character.move`
   setzen ihn zurück. Bisher genügte ein beliebiger `fact.assert` oder ein

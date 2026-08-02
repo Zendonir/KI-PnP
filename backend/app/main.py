@@ -15,6 +15,7 @@ from app.api.v1.router import api_router, ws_router
 from app.core.config import Settings, get_settings
 from app.core.container import Container
 from app.core.errors import register_exception_handlers
+from app.core.logging import HealthCheckLogFilter
 
 try:
     APP_VERSION = installed_version("ki-pnp-backend")
@@ -25,6 +26,16 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+_access_logger = logging.getLogger("uvicorn.access")
+if not any(isinstance(f, HealthCheckLogFilter) for f in _access_logger.filters):
+    # uvicorn baut seine Logger-Konfiguration beim Start von Config() auf --
+    # vor dem Import dieses Moduls (der ueber den App-Importpfad "app.main:app"
+    # erst beim anschliessenden config.load_app() erfolgt). Der Filter laesst
+    # sich also hier gefahrlos anhaengen, ohne von uvicorns eigener
+    # Konfiguration ueberschrieben zu werden. Die Existenzpruefung verhindert
+    # doppelte Filter, falls dieses Modul mehrfach importiert wird (Tests).
+    _access_logger.addFilter(HealthCheckLogFilter())
 
 DESCRIPTION = """\
 Backend der KI-gestuetzten Pen-&-Paper-Plattform.
