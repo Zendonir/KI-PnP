@@ -11,6 +11,7 @@ import type {
   WorldLocation,
 } from "../lib/types";
 import { Badge, Button, Card, StatBar } from "./ui";
+import { WorldMap } from "./WorldMap";
 
 const PRIMARY_STATS = ["hp", "mana", "stamina"];
 
@@ -275,11 +276,17 @@ export function PartyPanel({
 }
 
 export function WorldPanel({
+  gameId,
+  myLocation,
   locations,
   entities,
   facts,
   knowledge,
 }: {
+  gameId: string;
+  /** Name des Ortes, an dem der eigene Charakter gerade steht -- treibt den
+   * Markerpunkt auf der Karte. `null`: noch kein bekannter Standort. */
+  myLocation: string | null;
   locations: WorldLocation[];
   entities: WorldEntity[];
   facts: Fact[];
@@ -287,6 +294,16 @@ export function WorldPanel({
 }) {
   return (
     <div className="space-y-4">
+      <Card title="Weltkarte">
+        <WorldMap seed={gameId} markerSeed={myLocation} />
+      </Card>
+
+      {myLocation && (
+        <Card title={`Detailkarte: ${myLocation}`}>
+          <WorldMap seed={gameId} markerSeed={myLocation} detail />
+        </Card>
+      )}
+
       <Card title={`Orte (${locations.length})`}>
         {locations.length === 0 ? (
           <p className="text-sm text-parchment/60">Noch nichts entdeckt.</p>

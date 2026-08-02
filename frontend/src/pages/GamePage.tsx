@@ -19,6 +19,7 @@ import {
 } from "../components/Panels";
 import { NarrationFeed } from "../components/NarrationFeed";
 import { Badge, Button, Card, ErrorNote, Field, Spinner, TextInput } from "../components/ui";
+import { WorldMap } from "../components/WorldMap";
 import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
 import type { GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
@@ -238,6 +239,10 @@ function LobbyView({
           <p className="text-sm text-parchment/80">
             {state.game.premise?.trim() || buildWorldTeaser(state.game.settings)}
           </p>
+        </Card>
+
+        <Card title="Weltkarte">
+          <WorldMap seed={state.game.id} />
         </Card>
 
         <Card title="Mitspieler einladen">
@@ -666,6 +671,8 @@ function TableView({
 
         {tab === "world" && (
           <WorldPanel
+            gameId={state.game.id}
+            myLocation={state.my_character?.location ?? null}
             locations={state.locations}
             entities={state.entities}
             facts={state.facts}

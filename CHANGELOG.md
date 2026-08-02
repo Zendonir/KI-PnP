@@ -9,6 +9,15 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 
 ### Hinzugefügt
 
+- Weltkarte: eine grobe, rein clientseitig aus der Spiel-ID erzeugte
+  Kuestenlinie steht von Anfang an in der Lobby, noch vor Rundenstart --
+  ganz ohne Bildgenerierung oder Server-Rundreise, dieselbe Spiel-ID ergibt
+  immer dieselbe Form. Sobald der eigene Charakter einen Standort hat,
+  markiert ein Punkt (deterministisch aus dem Ortsnamen) nur diesen einen,
+  aktuellen Ort -- keine Liste aller entdeckten Orte auf der Karte. Im
+  Welt-Tab kommt bei bekanntem Standort zusaetzlich eine kleine
+  Detailkarte dazu, mit einer eigenen, ortsspezifischen Kuestenlinie und
+  dem Marker in der Mitte.
 - Sichtbarer Quest-Fortschritt: der Vermerk aus dem letzten `quest.update`
   steht jetzt unter der Quest, samt Zug-Nummer. Bisher wurde er zwar
   gespeichert, aber weder angezeigt noch je wieder gelesen -- auch die KI
