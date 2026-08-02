@@ -115,6 +115,30 @@ export function Select({
   );
 }
 
+/** Vollflaechiger Dialog. Ohne `onDismiss` laesst sich der Hintergrund nicht
+ * wegtippen -- fuer Momente, die eine bewusste Entscheidung verlangen. */
+export function Modal({
+  children,
+  onDismiss,
+}: {
+  children: ReactNode;
+  onDismiss?: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 p-4 backdrop-blur-sm"
+      onClick={onDismiss}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-ink-600 bg-ink-800 p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function Spinner({ label }: { label?: string }) {
   return (
     <div className="flex items-center gap-3 text-sm text-parchment/60">

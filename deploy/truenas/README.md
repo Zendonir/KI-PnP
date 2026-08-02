@@ -57,6 +57,7 @@ docker login ghcr.io -u <github-benutzername>
    | `POSTGRES_PASSWORD` und `DATABASE_URL` | Datenbankkennwort, muss bei `db`, `backend` **und** `worker` identisch sein und darf nur Buchstaben, Ziffern, `-` und `_` enthalten (siehe unten) |
    | `PUBLIC_BASE_URL` | Adresse im Netz, z. B. `http://192.168.1.50:30080` — landet im QR-Code |
    | `JWT_SECRET` | eigenes Geheimnis, z. B. aus `openssl rand -hex 32` |
+   | `SETTINGS_PASSWORD` | eigenes Kennwort fürs Einstellungen-Menü (`/settings`), z. B. aus `openssl rand -hex 24`; leer = deaktiviert. Nur bei `backend` nötig |
    | `OPENAI_API_KEY` | Schlüssel für Spielleiter-KI und Sprachausgabe; bei `backend` und `worker` eintragen |
 
 4. Namen vergeben (etwa `ki-pnp`) und installieren
@@ -162,11 +163,29 @@ gewünschte Version setzen, etwa `:0.2.0` statt `:latest`. Migrationen laufen
 beim Start von selbst. Für den produktiven Betrieb ist eine feste Version
 ratsam — `:latest` ändert sich unbemerkt.
 
+**Wie prüfe ich, welcher Stand tatsächlich läuft?** `:latest` in der Registry
+wird nur neu gebaut, wenn im Repository ein Tag `v*` erscheint oder jemand
+den Workflow *Release-Images* von Hand anstößt (*Actions* → *Run workflow*)
+— ein Zusammenführen in `main` allein löst das nicht aus. Ein frisch
+gezogenes `:latest` kann also trotzdem der alte Stand sein. Zwei Wege, das
+zu erkennen:
+
+- Auf der Startseite der Oberfläche steht klein im Fußbereich
+  `vX.Y.Z · <Commit>`.
+- `curl http://<adresse>:30080/api/health` nennt dasselbe unter `version`
+  und `git_sha`.
+
+Stimmt der Commit nicht mit dem erwarteten überein, wurde entweder das
+Image nicht neu gebaut oder der Container zieht es nicht neu — dann hilft
+in der App-Oberfläche *Update* bzw. das Image von Hand erneut ziehen.
+
 **Von außen erreichbar machen.** Für den Zugriff über das Internet gehört ein
 Reverse Proxy mit TLS davor (etwa Traefik oder Nginx Proxy Manager auf
 demselben Server). Danach `PUBLIC_BASE_URL` auf die öffentliche Adresse
 setzen, sonst verweisen die Beitrittslinks weiterhin auf die interne IP.
-Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren.
+Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren. Das
+Einstellungen-Menü (`/settings`) ist durch `SETTINGS_PASSWORD` geschützt und
+profitiert vom selben TLS-Aufbau.
 
 ## Wenn etwas klemmt
 
@@ -183,3 +202,4 @@ Ohne HTTPS lässt sich die PWA auf iPhones nicht installieren.
 | Der Worker meldet `401` | Der Schlüssel ist ungültig oder hat kein Guthaben. Bei einem lokalen Dienst darf `TTS_API_KEY` leer bleiben |
 | Der Worker meldet einen Verbindungsfehler | `TTS_BASE_URL` ist vom Container aus nicht erreichbar. Bei einem lokalen Dienst die IP des Servers verwenden, nicht `localhost` |
 | Die Erzählung hallt mehrfach durch den Raum | Mehrere Geräte geben Ton aus. Auf den übrigen *Ton hier* ausschalten |
+| Die App bleibt dauerhaft auf „Deploying" stehen, obwohl alle Container laufen | Ältere `ki-pnp.yaml` ohne `healthcheck: disable: true` beim Dienst `worker`. Er erbt sonst den Gesundheitscheck des Backends (`curl .../api/health`), kann ihn aber nie bestehen, weil er keinen Webserver startet. Die aktuelle `ki-pnp.yaml` aus diesem Repository einspielen (App bearbeiten → YAML ersetzen) |

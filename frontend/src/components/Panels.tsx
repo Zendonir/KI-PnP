@@ -1,6 +1,7 @@
 /** Ansichten fuer Charakter, Inventar, Quests, Gruppe und Welt. */
 
 import type {
+  ActiveLocationTurn,
   Character,
   Fact,
   GameEvent,
@@ -9,7 +10,8 @@ import type {
   WorldEntity,
   WorldLocation,
 } from "../lib/types";
-import { Badge, Card, StatBar } from "./ui";
+import { Badge, Button, Card, StatBar } from "./ui";
+import { WorldMap } from "./WorldMap";
 
 const PRIMARY_STATS = ["hp", "mana", "stamina"];
 
@@ -65,6 +67,30 @@ export function CharacterSheet({ character }: { character: Character | null }) {
           <StatBar key={stat.key} stat={stat} />
         ))}
       </div>
+
+      {character.experience_to_next_level > 0 && (
+        <div className="mt-3">
+          <div className="mb-1 flex justify-between text-xs text-parchment/50">
+            <span>Erfahrung</span>
+            <span className="tabular-nums">
+              {character.experience} / {character.experience_to_next_level}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-900">
+            <div
+              className="h-full rounded-full bg-ember-500 transition-[width]"
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.round(
+                    (character.experience / character.experience_to_next_level) * 100,
+                  ),
+                )}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {attributes.length > 0 && (
         <dl className="mt-4 grid grid-cols-2 gap-2 text-sm">
@@ -177,6 +203,14 @@ export function QuestPanel({ quests }: { quests: Quest[] }) {
               {quest.description && (
                 <p className="mt-1 text-xs text-parchment/60">{quest.description}</p>
               )}
+              {quest.note && (
+                <p className="mt-2 border-l-2 border-ember-500/50 pl-2 text-xs text-ember-400/90">
+                  {quest.note}
+                  {quest.turn_number > 0 && (
+                    <span className="text-parchment/40"> (Zug {quest.turn_number})</span>
+                  )}
+                </p>
+              )}
             </li>
           ))}
         </ul>
@@ -242,11 +276,17 @@ export function PartyPanel({
 }
 
 export function WorldPanel({
+  gameId,
+  myLocation,
   locations,
   entities,
   facts,
   knowledge,
 }: {
+  gameId: string;
+  /** Name des Ortes, an dem der eigene Charakter gerade steht -- treibt den
+   * Markerpunkt auf der Karte. `null`: noch kein bekannter Standort. */
+  myLocation: string | null;
   locations: WorldLocation[];
   entities: WorldEntity[];
   facts: Fact[];
@@ -254,6 +294,16 @@ export function WorldPanel({
 }) {
   return (
     <div className="space-y-4">
+      <Card title="Weltkarte">
+        <WorldMap seed={gameId} markerSeed={myLocation} />
+      </Card>
+
+      {myLocation && (
+        <Card title={`Detailkarte: ${myLocation}`}>
+          <WorldMap seed={gameId} markerSeed={myLocation} detail />
+        </Card>
+      )}
+
       <Card title={`Orte (${locations.length})`}>
         {locations.length === 0 ? (
           <p className="text-sm text-parchment/60">Noch nichts entdeckt.</p>
@@ -325,6 +375,54 @@ export function WorldPanel({
         )}
       </Card>
     </div>
+  );
+}
+
+/** Uebersicht ueber alle gleichzeitig laufenden Orte -- nur fuer die Spielleitung.
+ *
+ * Zeigt sich nur, wenn sich die Gruppe tatsaechlich getrennt hat -- bei
+ * einem einzelnen Ort waere die Karte nur eine Wiederholung dessen, was
+ * ohnehin schon in der Kopfzeile steht.
+ */
+export function LocationOverviewPanel({
+  turns,
+  busy,
+  onResolve,
+}: {
+  turns: ActiveLocationTurn[];
+  busy: boolean;
+  onResolve: (turnId: string) => void;
+}) {
+  if (turns.length < 2) return null;
+
+  return (
+    <Card title="Getrennte Gruppe">
+      <ol className="space-y-2 text-sm">
+        {turns.map((turn) => (
+          <li
+            key={turn.turn_id}
+            className="flex items-center justify-between gap-2 rounded-lg bg-ink-900/50 px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-parchment">
+                {turn.location_name ?? "Unbekannter Ort"}
+              </p>
+              <p className="truncate text-xs text-parchment/50">
+                {turn.character_names.join(", ") || "niemand dort"} ·{" "}
+                {turn.submitted_count}/{turn.participant_count} bereit
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              disabled={busy || turn.status !== "collecting"}
+              onClick={() => onResolve(turn.turn_id)}
+            >
+              Aufloesen
+            </Button>
+          </li>
+        ))}
+      </ol>
+    </Card>
   );
 }
 

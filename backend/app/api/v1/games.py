@@ -24,6 +24,7 @@ from app.db.models import Character, SceneSummary
 from app.schemas.api import (
     CharacterCreateRequest,
     CharacterOut,
+    CharacterSkillsUpdateRequest,
     GameCreateRequest,
     GameOut,
     GameStateOut,
@@ -91,8 +92,21 @@ async def qr_code(code: str, games: GameServiceDep, settings: SettingsDep) -> Re
 
 
 @router.get("/{game_id}/state", response_model=GameStateOut)
-async def get_state(principal: PrincipalDep, games: GameServiceDep) -> GameStateOut:
-    """Vollstaendiger, fuer diesen Spieler gefilterter Spielzustand."""
+async def get_state(
+    principal: PrincipalDep, games: GameServiceDep, turns: TurnServiceDep
+) -> GameStateOut:
+    """Vollstaendiger, fuer diesen Spieler gefilterter Spielzustand.
+
+    Findet sich am Ort des eigenen Charakters noch kein laufender Zug --
+    etwa direkt nachdem die Gruppe sich getrennt hat --, wird er hier schon
+    angelegt. Sonst saehe der Spieler dort keine Handlungsmoeglichkeit, bis
+    zufaellig jemand anders zuerst etwas einreicht.
+    """
+    turn = await games.current_turn_for_player(principal.game, principal.player)
+    if turn is None:
+        character = await games.character_of(principal.player)
+        if character is not None:
+            await turns.ensure_turn_for_character(principal.game, character)
     return await games.build_state(principal.game, principal.player)
 
 
@@ -105,6 +119,27 @@ async def create_character(
 ) -> CharacterOut:
     """Erstellt den Charakter des aufrufenden Spielers."""
     character = await characters.create(principal.game, principal.player, request)
+    await session.commit()
+    return await character_to_out(session, character)
+
+
+@router.put("/{game_id}/characters/me/skills", response_model=CharacterOut)
+async def set_character_skills(
+    request: CharacterSkillsUpdateRequest,
+    principal: PrincipalDep,
+    games: GameServiceDep,
+    characters: CharacterServiceDep,
+    session: SessionDep,
+) -> CharacterOut:
+    """Setzt die frei benannten Zusatzfaehigkeiten des eigenen Charakters.
+
+    Ersetzt die komplette bisherige Liste; die vier Grundattribute und die
+    Ressourcen-Pools bleiben unberuehrt.
+    """
+    character = await games.character_of(principal.player)
+    if character is None:
+        raise NotFoundError("Du hast noch keinen Charakter in dieser Runde.")
+    character = await characters.set_skills(character, request.skills)
     await session.commit()
     return await character_to_out(session, character)
 

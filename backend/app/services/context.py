@@ -31,6 +31,38 @@ from app.db.models import (
 )
 from app.services.events import load_recent_events
 
+EXPECTED_TURNS: dict[str, int] = {
+    "oneshot": 15,
+    "short": 40,
+    "medium": 80,
+    "long": 160,
+    "campaign": 320,
+}
+"""Grober Zug-Horizont je gewaehlter Spieldauer. Kein hartes Limit -- die
+Runde endet nicht automatisch --, sondern eine Orientierung, aus der sich
+die Phase des Spannungsbogens ableitet. Ohne sie hat die KI keinerlei
+Zielhorizont und keinen Grund, eine Geschichte je zum Hoehepunkt zu
+fuehren."""
+
+ARC_PHASES: tuple[tuple[float, str], ...] = (
+    (0.25, "setup"),
+    (0.60, "rising"),
+    (0.85, "climax"),
+    (1.01, "resolution"),
+)
+"""Anteil der erwarteten Spieldauer -> Phase. Der letzte Eintrag greift
+auch, wenn der Horizont ueberschritten ist (Anteil > 1)."""
+
+
+def arc_phase(turn_number: int, duration: str) -> tuple[str, float]:
+    """Phase des Spannungsbogens und Fortschrittsanteil fuer einen Zug."""
+    expected = EXPECTED_TURNS.get(duration, EXPECTED_TURNS["medium"])
+    ratio = turn_number / expected if expected > 0 else 1.0
+    for threshold, phase in ARC_PHASES:
+        if ratio < threshold:
+            return phase, ratio
+    return ARC_PHASES[-1][1], ratio
+
 
 class ContextBuilder:
     """Stellt die Kontextobjekte fuer die KI zusammen."""
@@ -57,16 +89,25 @@ class ContextBuilder:
         location = await self._current_location(turn)
         return {
             "settings": self._settings_payload(),
-            "turn_number": self._game.current_turn_number,
+            # Nummer *dieses* Zugs, nicht der hoechsten je vergebenen im
+            # Spiel -- sobald mehrere Orte gleichzeitig Zuege fuehren,
+            # koennen die beiden auseinanderlaufen. Ohne Aufteilung sind sie
+            # immer identisch.
+            "turn_number": turn.number if turn else self._game.current_turn_number,
             "scene_title": turn.scene_title if turn else "",
             "location": self._location_payload(location),
-            "characters": await self._characters_payload(include_knowledge=True),
+            "characters": await self._characters_payload(
+                include_knowledge=True,
+                location_id=turn.location_id if turn else None,
+            ),
             "npcs": await self._entities_payload(location),
             "quests": await self._quests_payload(),
             "facts": await self._facts_payload(),
             "summaries": await self._summaries_payload(),
             "recent_events": await self._recent_events_payload(),
             "action_results": action_results or [],
+            "stall_streak": self._game.stall_streak,
+            "arc": self._arc_payload(turn.number if turn else self._game.current_turn_number),
         }
 
     async def build_summary_context(self, *, from_seq: int) -> dict[str, Any]:
@@ -118,15 +159,24 @@ class ContextBuilder:
             "language": settings.language,
         }
 
+    def _arc_payload(self, turn_number: int) -> dict[str, Any]:
+        """Wo im Spannungsbogen die Runde gerade steht."""
+        duration = self._game.settings.duration if self._game.settings else "medium"
+        phase, ratio = arc_phase(turn_number, duration)
+        return {
+            "phase": phase,
+            "turn_number": turn_number,
+            "expected_turns": EXPECTED_TURNS.get(duration, EXPECTED_TURNS["medium"]),
+            "elapsed_share": round(ratio, 2),
+        }
+
     async def _current_location(self, turn: Turn | None) -> Location | None:
-        location_id: uuid.UUID | None = turn.location_id if turn else None
-        if location_id is None:
-            stmt = (
-                sa.select(Character.location_id)
-                .where(Character.game_id == self._game.id, Character.location_id.isnot(None))
-                .limit(1)
-            )
-            location_id = (await self._session.execute(stmt)).scalars().first()
+        # Der Ort gehoert eindeutig zum Zug -- jeder Zug bekommt seinen
+        # Ort bereits bei seiner Entstehung zugewiesen (_sync_location_turns
+        # in TurnService). Ein Fallback auf "irgendein Charakter im Spiel"
+        # waere seit ortsbezogenen Zuegen falsch: er koennte den Ort einer
+        # ganz anderen, unabhaengig laufenden Szene liefern.
+        location_id = turn.location_id if turn else None
         if location_id is None:
             return None
         return await self._session.get(Location, location_id)
@@ -142,8 +192,16 @@ class ContextBuilder:
         )
         return [(row[0], row[1]) for row in (await self._session.execute(stmt)).all()]
 
-    async def _characters_payload(self, *, include_knowledge: bool) -> list[dict[str, Any]]:
+    async def _characters_payload(
+        self, *, include_knowledge: bool, location_id: uuid.UUID | None = None
+    ) -> list[dict[str, Any]]:
         stmt = sa.select(Character).where(Character.game_id == self._game.id)
+        if location_id is not None:
+            # Nur die Charaktere an genau diesem Ort: sonst saehe die KI
+            # eines Ortes auch die Charaktere einer unabhaengig laufenden
+            # Szene anderswo. Beim Weltaufbau (kein location_id) bleibt die
+            # ganze Gruppe sichtbar, dort steht noch niemand irgendwo.
+            stmt = stmt.where(Character.location_id == location_id)
         characters = list((await self._session.execute(stmt)).scalars().all())
         payload: list[dict[str, Any]] = []
         for character in characters:
@@ -247,14 +305,21 @@ class ContextBuilder:
             state = quest.current_state
             if state is not None and state.status in ("completed", "failed"):
                 continue
-            payload.append(
-                {
-                    "title": quest.title,
-                    "description": quest.description,
-                    "status": state.status if state else "open",
-                    "is_main": quest.is_main,
-                }
-            )
+            entry: dict[str, Any] = {
+                "title": quest.title,
+                "description": quest.description,
+                "status": state.status if state else "open",
+                "is_main": quest.is_main,
+            }
+            # Ohne den letzten Fortschrittsvermerk saehe die KI nur
+            # "offen" und wuesste nicht, wo innerhalb der Quest die Gruppe
+            # steht -- sie koennte nicht auf Erreichtem aufbauen und
+            # begaenne die Quest faktisch jede Runde von vorn.
+            if state is not None and state.note:
+                entry["latest_progress"] = state.note
+            if state is not None and state.progress:
+                entry["progress"] = state.progress
+            payload.append(entry)
         return payload
 
     async def _facts_payload(self) -> list[dict[str, Any]]:

@@ -31,6 +31,10 @@ export interface Game {
   current_turn_number: number;
   created_at: string;
   settings: GameSettings;
+  /** Von der KI bei der Rundenerstellung erzeugte kurze Weltvorschau (2-4
+   * Saetze). Kann fehlen, wenn der Aufruf misslang -- dann faellt die
+   * Lobby auf `buildWorldTeaser(settings)` zurueck. */
+  premise: string | null;
 }
 
 export interface Player {
@@ -75,6 +79,8 @@ export interface Character {
   avatar: string;
   level: number;
   experience: number;
+  /** Erfahrung, die von der aktuellen Stufe zur naechsten noetig ist. */
+  experience_to_next_level: number;
   is_alive: boolean;
   conditions: string[];
   location: string | null;
@@ -82,6 +88,28 @@ export interface Character {
   abilities: string[];
   inventory: InventoryEntry[];
 }
+
+/** Feste Ressourcen-Pools -- keine waehlbaren Wuerfel-Attribute, auch wenn
+ * sie technisch als Stat existieren (siehe app.domain.rules.RESOURCE_POOL_KEYS). */
+export const RESOURCE_POOL_KEYS = new Set(["hp", "mana", "stamina"]);
+
+/** Ressourcen-Pools plus die vier Grundattribute -- Namen, die beim
+ * Verteilen frei benannter Skills nicht verwendet werden duerfen (siehe
+ * app.services.character_service._RESERVED_STAT_KEYS). */
+export const RESERVED_STAT_KEYS = new Set([
+  ...RESOURCE_POOL_KEYS,
+  "strength",
+  "dexterity",
+  "intelligence",
+  "charisma",
+]);
+
+export const CORE_STAT_LABELS: Record<string, string> = {
+  strength: "Stärke",
+  dexterity: "Geschicklichkeit",
+  intelligence: "Intelligenz",
+  charisma: "Charisma",
+};
 
 export interface Suggestion {
   kind: string;
@@ -94,12 +122,47 @@ export interface Turn {
   number: number;
   status: "collecting" | "resolving" | "completed";
   scene_title: string;
+  location_id: string | null;
+  location_name: string | null;
   submitted_player_ids: string[];
   my_suggestions: Suggestion[];
 }
 
+/** Aufdeckungs-Fortschritt des letzten abgeschlossenen Zugs am eigenen Ort.
+ * Solange revealed false ist, haelt das Frontend Wuerfelergebnisse,
+ * Erzaehlung und Ton dieses Zugs im Verlauf zurueck -- das Wuerfel-Popup
+ * selbst zeigt die eigenen Ergebnisse trotzdem sofort. */
+export interface PendingReveal {
+  turn_id: string;
+  revealed: boolean;
+  acknowledged_player_ids: string[];
+  expected_player_ids: string[];
+}
+
+/** Ein als Gruppenereignis markierter Vorschlag, auf den die eigene Person
+ * noch nicht geantwortet hat. */
+export interface GroupProposal {
+  id: string;
+  initiator_name: string;
+  kind: string;
+  text: string;
+}
+
+/** Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung. */
+export interface ActiveLocationTurn {
+  turn_id: string;
+  turn_number: number;
+  status: "collecting" | "resolving" | "completed";
+  location_id: string | null;
+  location_name: string | null;
+  character_names: string[];
+  submitted_count: number;
+  participant_count: number;
+}
+
 export interface Narration {
   id: string;
+  turn_id: string | null;
   kind: "public" | "private";
   scene_title: string;
   text: string;
@@ -109,6 +172,7 @@ export interface Narration {
 
 export interface DiceRoll {
   id: string;
+  turn_id: string | null;
   character_id: string | null;
   notation: string;
   rolls: number[];
@@ -127,6 +191,10 @@ export interface Quest {
   description: string;
   status: string;
   is_main: boolean;
+  /** Juengster Fortschrittsvermerk -- zeigt, wo die Gruppe in dieser Quest steht. */
+  note: string;
+  /** Zug, in dem dieser Stand zuletzt fortgeschrieben wurde. */
+  turn_number: number;
 }
 
 export interface WorldLocation {
@@ -190,6 +258,8 @@ export interface GameState {
   me: Player;
   my_character: Character | null;
   turn: Turn | null;
+  pending_reveal: PendingReveal | null;
+  pending_group_proposal: GroupProposal | null;
   narrations: Narration[];
   dice_rolls: DiceRoll[];
   quests: Quest[];
@@ -200,6 +270,7 @@ export interface GameState {
   events: GameEvent[];
   audio: AudioJob | null;
   is_host: boolean;
+  active_location_turns: ActiveLocationTurn[] | null;
 }
 
 export interface RealtimeMessage {
@@ -209,6 +280,25 @@ export interface RealtimeMessage {
   payload: Record<string, unknown>;
 }
 
+/** Kurzfristiges Eingriffsangebot (Quick-Time-Event), payload von `intervention.offer`. */
+export interface InterventionOffer {
+  intervention_id: string;
+  actor: string;
+  action_text: string;
+  timeout_seconds: number;
+}
+
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
+}
+
+/** Installationsweite Laufzeit-Einstellungen (Settings-Menue). Unabhaengig
+ * von `GameSettings`, die pro Runde gelten. */
+export interface RuntimeSettings {
+  tts_voice: string;
+  tts_speed: number;
+  tts_provider: string;
+  voice_source: "openai" | "custom";
+  known_voices: string[];
+  updated_at: string | null;
 }

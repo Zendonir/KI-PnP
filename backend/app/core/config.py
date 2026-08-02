@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     app_name: str = "KI-PnP"
     environment: Literal["dev", "test", "prod"] = "dev"
     debug: bool = False
+    git_sha: str = "dev"
+    """Kurzer Commit-Hash des Baus. Beim Bauen des Images gesetzt, damit sich
+    anhand von /api/health erkennen laesst, welcher Stand tatsaechlich
+    laeuft -- sonst schwer zu unterscheiden von einem aelteren ":latest"."""
     public_base_url: str = "http://localhost:8080"
     """Basis-URL, unter der das Frontend erreichbar ist (fuer Beitrittslinks)."""
 
@@ -39,6 +43,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_ttl_seconds: int = 60 * 60 * 24 * 30
+
+    settings_password: str = ""
+    """Sichert das installationsweite Einstellungen-Menue (/settings). Leer
+    = deaktiviert -- unabhaengig von Spieler-/Spielleiter-Token."""
 
     # --- KI ------------------------------------------------------------
     ai_provider: Literal["mock", "anthropic", "openai", "ollama"] = "mock"

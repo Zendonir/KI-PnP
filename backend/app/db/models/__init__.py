@@ -16,13 +16,17 @@ from app.db.models.character import (
 from app.db.models.game import Game, GameSettings, Player
 from app.db.models.media import AudioJob, Image
 from app.db.models.quest import Quest, QuestState
+from app.db.models.runtime_settings import RuntimeSettings
 from app.db.models.turn import (
     Action,
     DiceRoll,
     Event,
+    GroupProposal,
+    GroupProposalResponse,
     Narration,
     SceneSummary,
     Turn,
+    TurnAck,
 )
 from app.db.models.world import (
     EntityState,
@@ -47,6 +51,8 @@ __all__ = [
     "Fact",
     "Game",
     "GameSettings",
+    "GroupProposal",
+    "GroupProposalResponse",
     "Image",
     "Inventory",
     "InventoryItem",
@@ -58,7 +64,9 @@ __all__ = [
     "Quest",
     "QuestState",
     "Relationship",
+    "RuntimeSettings",
     "SceneSummary",
     "Turn",
+    "TurnAck",
     "WorldEntity",
 ]

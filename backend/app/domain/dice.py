@@ -109,6 +109,11 @@ def roll(
     )
 
 
+def better(first: DiceResult, second: DiceResult) -> DiceResult:
+    """Waehlt bei Vorteil (zwei unabhaengige Wuerfe) das staerkere Ergebnis."""
+    return second if second.total > first.total else first
+
+
 def _degree(rolls: list[int], sides: int, total: int, difficulty: int) -> str:
     """Bewertet den Erfolgsgrad eines Wurfes."""
     if len(rolls) == 1 and sides == 20:

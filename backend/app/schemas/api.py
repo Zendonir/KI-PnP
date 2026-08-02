@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Genre = Literal["fantasy", "scifi", "horror", "mystery", "cyberpunk", "postapocalyptic", "western"]
 Difficulty = Literal["story", "easy", "normal", "hard", "deadly"]
@@ -76,6 +76,7 @@ class GameOut(Schema):
     current_turn_number: int
     created_at: datetime
     settings: GameSettingsOut
+    premise: str | None = None
 
 
 class GameCreateRequest(Schema):
@@ -127,6 +128,10 @@ class CharacterOut(Schema):
     avatar: str
     level: int
     experience: int
+    experience_to_next_level: int = 0
+    """Erfahrung, die von der aktuellen Stufe zur naechsten noetig ist --
+    damit die Oberflaeche den Fortschritt als Balken zeigen kann, statt nur
+    eine nackte Zahl."""
     is_alive: bool
     conditions: list[str]
     location: str | None = None
@@ -142,6 +147,26 @@ class CharacterCreateRequest(Schema):
     background: str = Field(default="", max_length=2000)
     avatar: str = Field(default="", max_length=80)
     randomize: bool = False
+
+
+class SkillAllocation(Schema):
+    name: str = Field(min_length=1, max_length=60)
+    points: int = Field(ge=0, le=100)
+
+
+class CharacterSkillsUpdateRequest(Schema):
+    """Frei benannte Zusatzfaehigkeiten, die neben den vier Grundattributen
+    als Wuerfel-Attribut waehlbar sind. Ersetzt bei jedem Aufruf die
+    komplette bisherige Liste (kein Zusammenfuehren)."""
+
+    skills: list[SkillAllocation] = Field(default_factory=list, max_length=12)
+
+    @model_validator(mode="after")
+    def _check_budget(self) -> CharacterSkillsUpdateRequest:
+        total = sum(entry.points for entry in self.skills)
+        if total > 100:
+            raise ValueError("Insgesamt duerfen nicht mehr als 100 Punkte vergeben werden.")
+        return self
 
 
 # --- Runden und Handlungen ---------------------------------------------
@@ -169,10 +194,18 @@ class ActionSubmitRequest(Schema):
     text: str = Field(min_length=1, max_length=1000)
     target_ref: str | None = Field(default=None, max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)
+    stat: str | None = Field(default=None, max_length=60)
+    """Vom Spieler selbst gewaehltes Attribut oder frei benannter Skill,
+    gegen den diese Handlung gewuerfelt werden soll."""
+    group_event: bool = False
+    """Markiert diese Handlung als Gruppenereignis -- andere aktive Spieler
+    am selben Ort werden gefragt, ob sie mitmachen wollen (siehe
+    GroupProposalOut)."""
 
 
 class DiceRollOut(Schema):
     id: uuid.UUID
+    turn_id: uuid.UUID | None = None
     character_id: uuid.UUID | None
     notation: str
     rolls: list[int]
@@ -187,6 +220,7 @@ class DiceRollOut(Schema):
 
 class NarrationOut(Schema):
     id: uuid.UUID
+    turn_id: uuid.UUID | None = None
     kind: str
     scene_title: str
     text: str
@@ -199,8 +233,46 @@ class TurnOut(Schema):
     number: int
     status: str
     scene_title: str
+    location_id: uuid.UUID | None = None
+    location_name: str | None = None
     submitted_player_ids: list[uuid.UUID] = Field(default_factory=list)
     my_suggestions: list[SuggestionOut] = Field(default_factory=list)
+
+
+class PendingRevealOut(Schema):
+    """Aufdeckungs-Fortschritt des letzten abgeschlossenen Zugs am eigenen
+    Ort. Solange revealed False ist, haelt das Frontend Wuerfelergebnisse,
+    Erzaehlung und Ton dieses Zugs im Verlauf zurueck -- das Wuerfel-Popup
+    selbst zeigt die eigenen Ergebnisse trotzdem sofort."""
+
+    turn_id: uuid.UUID
+    revealed: bool
+    acknowledged_player_ids: list[uuid.UUID] = Field(default_factory=list)
+    expected_player_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class GroupProposalOut(Schema):
+    """Ein als Gruppenereignis markierter Vorschlag, auf den die aufrufende
+    Person noch nicht geantwortet hat. Verschwindet aus dem eigenen Zustand,
+    sobald sie geantwortet hat -- unabhaengig davon, ob sie zugestimmt hat."""
+
+    id: uuid.UUID
+    initiator_name: str
+    kind: str
+    text: str
+
+
+class ActiveLocationTurnOut(Schema):
+    """Ein gleichzeitig laufender Zug an einem Ort -- nur fuer die Spielleitung."""
+
+    turn_id: uuid.UUID
+    turn_number: int
+    status: str
+    location_id: uuid.UUID | None = None
+    location_name: str | None = None
+    character_names: list[str] = Field(default_factory=list)
+    submitted_count: int = 0
+    participant_count: int = 0
 
 
 class EventOut(Schema):
@@ -220,6 +292,11 @@ class QuestOut(Schema):
     description: str
     status: str
     is_main: bool
+    note: str = ""
+    """Juengster Fortschrittsvermerk aus dem letzten quest.update -- macht
+    fuer die Gruppe sichtbar, wo sie in dieser Quest gerade steht."""
+    turn_number: int = 0
+    """Zug, in dem dieser Stand zuletzt fortgeschrieben wurde."""
 
 
 class LocationOut(Schema):
@@ -274,6 +351,8 @@ class GameStateOut(Schema):
     me: PlayerOut
     my_character: CharacterOut | None
     turn: TurnOut | None
+    pending_reveal: PendingRevealOut | None = None
+    pending_group_proposal: GroupProposalOut | None = None
     narrations: list[NarrationOut]
     dice_rolls: list[DiceRollOut]
     quests: list[QuestOut]
@@ -284,6 +363,9 @@ class GameStateOut(Schema):
     events: list[EventOut]
     audio: AudioOut | None
     is_host: bool
+    active_location_turns: list[ActiveLocationTurnOut] | None = None
+    """Uebersicht ueber alle gleichzeitig laufenden Orte -- nur fuer die
+    Spielleitung befuellt, sonst None."""
 
 
 # --- Administration -----------------------------------------------------
@@ -296,3 +378,44 @@ class AdminKickRequest(Schema):
 class OkResponse(Schema):
     ok: bool = True
     message: str = ""
+
+
+class InterventionRespondRequest(Schema):
+    accepted: bool
+
+
+class GroupProposalRespondRequest(Schema):
+    accepted: bool
+
+
+# --- Installationsweite Einstellungen ------------------------------------
+
+
+class SettingsStatusOut(Schema):
+    enabled: bool
+
+
+class SettingsLoginRequest(Schema):
+    password: str = Field(min_length=1, max_length=200)
+
+
+class SettingsLoginOut(Schema):
+    token: str
+    expires_at: datetime
+
+
+VoiceSource = Literal["openai", "custom"]
+
+
+class RuntimeSettingsOut(Schema):
+    tts_voice: str
+    tts_speed: float
+    tts_provider: str
+    voice_source: VoiceSource
+    known_voices: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class RuntimeSettingsUpdateRequest(Schema):
+    tts_voice: str | None = Field(default=None, max_length=60)
+    tts_speed: float | None = Field(default=None, ge=0.25, le=4.0)

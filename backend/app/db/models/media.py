@@ -26,6 +26,9 @@ class AudioJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     provider: Mapped[str] = mapped_column(sa.String(30), default="browser")
     voice: Mapped[str] = mapped_column(sa.String(60), default="narrator")
+    speed: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+    """Sprechgeschwindigkeit zum Zeitpunkt der Erzeugung. None = Vorgabe des
+    Anbieters (bei OpenAI 1.0)."""
     status: Mapped[str] = mapped_column(sa.String(20), default="pending", index=True)
     target: Mapped[str] = mapped_column(sa.String(30), default="browser")
     """browser, sonos, chromecast, home_assistant, airplay."""

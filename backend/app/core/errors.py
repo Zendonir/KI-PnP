@@ -50,6 +50,11 @@ class AIError(DomainError):
     code = "ai_error"
 
 
+class RateLimitedError(DomainError):
+    status_code = 429
+    code = "rate_limited"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Registriert die Umsetzung von DomainError auf JSON-Antworten."""
 

@@ -1,13 +1,17 @@
 /** Lobby und Spieltisch. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ActionBar } from "../components/ActionBar";
 import { AudioControls } from "../components/AudioControls";
+import { DiceRollModal } from "../components/DiceRollModal";
+import { GroupProposalPrompt } from "../components/GroupProposalPrompt";
+import { InterventionPrompt } from "../components/InterventionPrompt";
 import {
   CharacterSheet,
   InventoryPanel,
+  LocationOverviewPanel,
   LogPanel,
   PartyPanel,
   QuestPanel,
@@ -15,10 +19,12 @@ import {
 } from "../components/Panels";
 import { NarrationFeed } from "../components/NarrationFeed";
 import { Badge, Button, Card, ErrorNote, Field, Spinner, TextInput } from "../components/ui";
+import { WorldMap } from "../components/WorldMap";
 import { ApiError, api } from "../lib/api";
 import { clearSession, loadSession } from "../lib/session";
-import type { GameState, RealtimeMessage } from "../lib/types";
+import type { GameState, InterventionOffer, RealtimeMessage } from "../lib/types";
 import { useGameState } from "../lib/useGameState";
+import { buildWorldTeaser } from "../lib/worldTeaser";
 
 type Tab = "story" | "character" | "quests" | "world" | "log";
 
@@ -98,7 +104,8 @@ function StatusBar({ state, connected }: { state: GameState; connected: boolean 
       <div className="min-w-0">
         <p className="truncate text-sm font-semibold text-parchment">{state.game.name}</p>
         <p className="truncate text-xs text-parchment/50">
-          Code {state.game.code} · Zug {state.game.current_turn_number} ·{" "}
+          Code {state.game.code} · Zug{" "}
+          {state.turn?.number ?? state.game.current_turn_number} ·{" "}
           {state.turn?.scene_title || state.game.status}
         </p>
       </div>
@@ -127,6 +134,13 @@ function LobbyView({
   const [background, setBackground] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Zwei getrennte Schritte nach dem Erstellen: erst alle Namen sammeln
+  // (ein Freitextfeld pro Zeile, keine konkurrierenden Breitenangaben),
+  // dann -- nur fuer die dabei benannten Faehigkeiten -- die Punkte
+  // verteilen.
+  const [skillStep, setSkillStep] = useState<"names" | "points" | null>(null);
+  const [skillNames, setSkillNames] = useState<string[]>([""]);
+  const [skillPoints, setSkillPoints] = useState<Record<string, number>>({});
   const joinUrl = `${window.location.origin}/join/${state.game.code}`;
 
   const createCharacter = async (randomize: boolean) => {
@@ -138,12 +152,62 @@ function LobbyView({
           ? { randomize: true }
           : { name, class: charClass, race, background },
       );
-      await onChanged();
+      // Der Zufallspfad ist bewusst schnell und ueberspringt die
+      // Fähigkeiten-Verteilung; wer den Charakter selbst baut, bekommt
+      // direkt danach den Verteilungsschritt gezeigt.
+      if (randomize) {
+        await onChanged();
+      } else {
+        setSkillNames([""]);
+        setSkillStep("names");
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Charakter konnte nicht erstellt werden.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const proceedToPoints = () => {
+    const cleaned = Array.from(
+      new Set(skillNames.map((entry) => entry.trim()).filter((entry) => entry)),
+    );
+    if (cleaned.length === 0) {
+      void skipSkills();
+      return;
+    }
+    setSkillPoints(Object.fromEntries(cleaned.map((entry) => [entry, 0])));
+    setSkillStep("points");
+  };
+
+  const skillPointsUsed = Object.values(skillPoints).reduce((sum, value) => sum + (value || 0), 0);
+  const skillPointsLeft = 100 - skillPointsUsed;
+
+  const finishSkills = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = Object.entries(skillPoints).map(([entryName, points]) => ({
+        name: entryName,
+        points: points || 0,
+      }));
+      if (payload.length > 0) {
+        await api.setCharacterSkills(state.game.id, token, payload);
+      }
+      setSkillStep(null);
+      await onChanged();
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Faehigkeiten konnten nicht gespeichert werden.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skipSkills = async () => {
+    setSkillStep(null);
+    await onChanged();
   };
 
   const start = async () => {
@@ -170,6 +234,16 @@ function LobbyView({
       <StatusBar state={state} connected={connected} />
       <div className="space-y-4 px-4 py-4">
         {error && <ErrorNote>{error}</ErrorNote>}
+
+        <Card title="Worum geht es?">
+          <p className="text-sm text-parchment/80">
+            {state.game.premise?.trim() || buildWorldTeaser(state.game.settings)}
+          </p>
+        </Card>
+
+        <Card title="Weltkarte">
+          <WorldMap seed={state.game.id} />
+        </Card>
 
         <Card title="Mitspieler einladen">
           <div className="flex flex-col items-center gap-3">
@@ -213,7 +287,106 @@ function LobbyView({
           hostId={state.players.find((player) => player.role === "host")?.id ?? null}
         />
 
-        {state.my_character ? (
+        {/* skillStep zuerst pruefen, nicht erst state.my_character: der
+            Charakter existiert in der Datenbank schon, sobald die
+            Erstellung selbst erfolgreich war -- lange bevor Faehigkeiten
+            zugewiesen sind. Ein Echtzeit-Update durch irgendeine Aktion
+            eines anderen Spielers (Beitritt, eigene Charaktererstellung
+            usw.) wuerde sonst mitten in diesem Schritt auf das
+            Charakterblatt springen. */}
+        {skillStep === "names" ? (
+          <Card title="Fähigkeiten benennen">
+            <p className="mb-3 text-sm text-parchment/65">
+              Erfinde eigene Fähigkeiten (z. B. „Schlösser knacken"). Im naechsten Schritt
+              verteilst du 100 Punkte darauf.
+            </p>
+            <div className="space-y-2">
+              {skillNames.map((value, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <TextInput
+                    value={value}
+                    onChange={(event) => {
+                      const next = [...skillNames];
+                      next[index] = event.target.value;
+                      setSkillNames(next);
+                    }}
+                    placeholder="z. B. Schlösser knacken"
+                  />
+                  {skillNames.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => setSkillNames(skillNames.filter((_, i) => i !== index))}
+                    >
+                      ✕
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              className="mt-2 w-full"
+              disabled={skillNames.length >= 12}
+              onClick={() => setSkillNames([...skillNames, ""])}
+            >
+              + Fähigkeit hinzufügen
+            </Button>
+            <div className="mt-3 flex gap-2">
+              <Button className="flex-1" onClick={proceedToPoints}>
+                Weiter
+              </Button>
+              <Button variant="ghost" disabled={busy} onClick={() => void skipSkills()}>
+                Überspringen
+              </Button>
+            </div>
+          </Card>
+        ) : skillStep === "points" ? (
+          <Card title="Punkte verteilen">
+            <p className="mb-3 text-sm text-parchment/65">
+              Verteile insgesamt 100 Punkte auf deine Fähigkeiten. Sie stehen dir spaeter
+              zusaetzlich zu den vier Grundattributen als Wuerfel-Attribut zur Wahl.
+            </p>
+            <div className="space-y-2">
+              {Object.keys(skillPoints).map((entryName) => (
+                <div key={entryName} className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-parchment">{entryName}</span>
+                  <TextInput
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={skillPoints[entryName]}
+                    onChange={(event) =>
+                      setSkillPoints({
+                        ...skillPoints,
+                        [entryName]: Number(event.target.value) || 0,
+                      })
+                    }
+                    className="!w-24 text-right"
+                  />
+                </div>
+              ))}
+            </div>
+            <p
+              className={`mt-3 text-sm ${
+                skillPointsLeft < 0 ? "text-blood-400" : "text-parchment/60"
+              }`}
+            >
+              Verbleibend: {skillPointsLeft} von 100 Punkten
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button variant="ghost" disabled={busy} onClick={() => setSkillStep("names")}>
+                Zurück
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={busy || skillPointsLeft < 0}
+                onClick={() => void finishSkills()}
+              >
+                Fertig
+              </Button>
+            </div>
+          </Card>
+        ) : state.my_character ? (
           <CharacterSheet character={state.my_character} />
         ) : (
           <Card title="Charakter erstellen">
@@ -308,7 +481,6 @@ function TableView({
   const hasSubmitted = Boolean(
     state.turn?.submitted_player_ids.includes(state.me.id),
   );
-  const latestNarration = state.narrations.at(-1) ?? null;
   const paused = state.game.status === "paused";
   const finished = state.game.status === "finished";
 
@@ -325,10 +497,105 @@ function TableView({
     }
   };
 
+  // Das Backend loest einen Zug vollstaendig auf, sobald alle eingereicht
+  // haben -- Wuerfelergebnisse, Erzaehlung und Sprachausgabe entstehen also
+  // schon im Hintergrund. state.pending_reveal ist die Server-Wahrheit
+  // darueber, ob der zuletzt abgeschlossene Zug am eigenen Ort schon fuer
+  // die ganze Gruppe aufgedeckt ist -- nicht nur lokaler Client-Zustand,
+  // uebersteht also auch Reload/Rekonnekt (anders als ein reiner Vorher-
+  // Nachher-Vergleich des Zug-Zeigers, der beim ersten Laden nach einem
+  // Reload nichts zum Vergleichen haette und Ergebnisse ungefiltert
+  // durchliesse).
+  const pending = state.pending_reveal;
+  const pendingRolls = useMemo(
+    () => (pending ? state.dice_rolls.filter((roll) => roll.turn_id === pending.turn_id) : []),
+    [pending, state.dice_rolls],
+  );
+  const iHaveAcked = Boolean(pending?.acknowledged_player_ids.includes(state.me.id));
+  const showRevealModal = Boolean(pending) && !pending!.revealed && !iHaveAcked && pendingRolls.length > 0;
+  const waitingForGroup = Boolean(pending) && !pending!.revealed && iHaveAcked;
+
+  const [acking, setAcking] = useState(false);
+  const acknowledgeReveal = async () => {
+    if (!pending || acking) return;
+    setAcking(true);
+    try {
+      await api.ackTurn(state.game.id, token, pending.turn_id);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Bestaetigung fehlgeschlagen.");
+    } finally {
+      setAcking(false);
+    }
+  };
+  const forceReveal = async () => {
+    if (!pending) return;
+    await run(() => api.forceReveal(state.game.id, token, pending.turn_id));
+  };
+
+  const pendingTurnId = pending && !pending.revealed ? pending.turn_id : null;
+  const pendingNarrationIds = useMemo(() => {
+    if (!pendingTurnId) return new Set<string>();
+    return new Set(
+      state.narrations.filter((item) => item.turn_id === pendingTurnId).map((item) => item.id),
+    );
+  }, [pendingTurnId, state.narrations]);
+
+  const visibleNarrations = pendingNarrationIds.size
+    ? state.narrations.filter((item) => !pendingNarrationIds.has(item.id))
+    : state.narrations;
+  const visibleRolls = pendingTurnId
+    ? state.dice_rolls.filter((roll) => roll.turn_id !== pendingTurnId)
+    : state.dice_rolls;
+  const visibleLatestNarration = visibleNarrations.at(-1) ?? null;
+  const visibleAudio =
+    pendingNarrationIds.size &&
+    state.audio?.narration_id &&
+    pendingNarrationIds.has(state.audio.narration_id)
+      ? null
+      : state.audio;
+
+  // Quick-Time-Event: ein an mich persoenlich gerichtetes Angebot bleibt
+  // sichtbar, bis es beantwortet ist oder die Zeit ablaeuft.
+  const [interventionOffer, setInterventionOffer] = useState<InterventionOffer | null>(null);
+  useEffect(() => {
+    if (
+      lastMessage?.type === "intervention.offer" &&
+      lastMessage.audience_player_id === state.me.id
+    ) {
+      setInterventionOffer(lastMessage.payload as unknown as InterventionOffer);
+    }
+  }, [lastMessage, state.me.id]);
+
   // Feste Hoehe mit eigenem Scrollbereich: so verdeckt die Handlungsleiste
   // niemals den Erzaehlstrang -- auch nicht bei langen Vorschlagslisten.
   return (
     <div className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden">
+      {showRevealModal && (
+        <DiceRollModal
+          rolls={pendingRolls}
+          characterNames={characterNames}
+          onDismiss={() => void acknowledgeReveal()}
+        />
+      )}
+
+      {interventionOffer && (
+        <InterventionPrompt
+          gameId={state.game.id}
+          token={token}
+          offer={interventionOffer}
+          onDone={() => setInterventionOffer(null)}
+        />
+      )}
+
+      {state.pending_group_proposal && (
+        <GroupProposalPrompt
+          gameId={state.game.id}
+          token={token}
+          proposal={state.pending_group_proposal}
+          onDone={() => void onChanged()}
+        />
+      )}
       <div className="safe-top shrink-0">
         <StatusBar state={state} connected={connected} />
         {paused && (
@@ -352,8 +619,8 @@ function TableView({
               isHost={state.is_host}
               playback={state.game.settings.audio_playback ?? "host"}
               enabled={state.game.settings.tts_enabled}
-              audio={state.audio}
-              latest={latestNarration}
+              audio={visibleAudio}
+              latest={visibleLatestNarration}
               lastMessage={lastMessage}
             />
           </div>
@@ -365,9 +632,22 @@ function TableView({
 
         {tab === "story" && (
           <>
+            {waitingForGroup && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-ink-700 bg-ink-800/70 px-3 py-2 text-sm text-parchment/70">
+                <span>
+                  Warte auf die Gruppe: {pending!.acknowledged_player_ids.length}/
+                  {pending!.expected_player_ids.length} bestätigt
+                </span>
+                {state.is_host && (
+                  <Button variant="ghost" disabled={busy} onClick={() => void forceReveal()}>
+                    Jetzt anzeigen
+                  </Button>
+                )}
+              </div>
+            )}
             <NarrationFeed
-              narrations={state.narrations}
-              rolls={state.dice_rolls}
+              narrations={visibleNarrations}
+              rolls={visibleRolls}
               events={state.events}
               characterNames={characterNames}
             />
@@ -391,6 +671,8 @@ function TableView({
 
         {tab === "world" && (
           <WorldPanel
+            gameId={state.game.id}
+            myLocation={state.my_character?.location ?? null}
             locations={state.locations}
             entities={state.entities}
             facts={state.facts}
@@ -483,6 +765,15 @@ function TableView({
                 )}
               </Card>
             )}
+            {state.is_host && state.active_location_turns && (
+              <LocationOverviewPanel
+                turns={state.active_location_turns}
+                busy={busy}
+                onResolve={(turnId) =>
+                  void run(() => api.resolveTurn(state.game.id, token, turnId))
+                }
+              />
+            )}
           </>
         )}
       </div>
@@ -491,13 +782,12 @@ function TableView({
         <div className="max-h-[48dvh] shrink-0 overflow-y-auto border-t border-ink-700 bg-ink-900/95 px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-xs text-parchment/50">
             <span>
-              Zug {state.game.current_turn_number}
+              Zug {state.turn?.number ?? state.game.current_turn_number}
               {state.turn ? ` · ${state.turn.submitted_player_ids.length} bereit` : ""}
             </span>
             {paused && <Badge tone="warn">pausiert</Badge>}
           </div>
           <ActionBar
-            turn={state.turn}
             character={state.my_character}
             hasSubmitted={hasSubmitted}
             disabled={busy || paused}

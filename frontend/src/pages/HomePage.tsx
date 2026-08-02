@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { Button, Card, Field, TextInput } from "../components/ui";
 import { clearSession, loadSession, type StoredSession } from "../lib/session";
+import { appVersion } from "../lib/version";
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -84,6 +85,11 @@ export function HomePage() {
 
       <footer className="mt-auto text-center text-xs text-parchment/35">
         Die Datenbank ist die einzige Wahrheit. Jede Handlung wird dauerhaft protokolliert.
+        <br />
+        <span className="text-parchment/25">{appVersion()}</span>{" "}
+        <Link to="/settings" className="text-parchment/25 underline-offset-2 hover:underline">
+          Einstellungen
+        </Link>
       </footer>
     </main>
   );

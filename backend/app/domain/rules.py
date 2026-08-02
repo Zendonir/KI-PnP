@@ -16,7 +16,14 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from app.domain import changes as ch
-from app.domain.dice import CRITICAL_FAILURE, CRITICAL_SUCCESS, DiceResult
+from app.domain.dice import (
+    CRITICAL_FAILURE,
+    CRITICAL_SUCCESS,
+    FAILURE,
+    PARTIAL,
+    SUCCESS,
+    DiceResult,
+)
 
 # Standard-Handlungsarten, die das Frontend als Vorschlaege anbietet.
 ACTION_KINDS: tuple[str, ...] = (
@@ -27,8 +34,16 @@ ACTION_KINDS: tuple[str, ...] = (
     "cast",
     "use_item",
     "flee",
+    "wait",
     "custom",
 )
+
+# Die vier Grundattribute, gegen die gewuerfelt werden kann.
+KNOWN_STATS: tuple[str, ...] = ("strength", "dexterity", "intelligence", "charisma")
+
+# Ressourcen-Pools sind keine waehlbaren Wuerfel-Attribute, auch wenn sie
+# technisch als CharacterStat existieren.
+RESOURCE_POOL_KEYS: frozenset[str] = frozenset({"hp", "mana", "stamina"})
 
 DIFFICULTY_TARGETS: dict[str, int] = {
     "story": 8,
@@ -37,6 +52,36 @@ DIFFICULTY_TARGETS: dict[str, int] = {
     "hard": 15,
     "deadly": 18,
 }
+
+XP_PER_DEGREE: dict[str, int] = {
+    CRITICAL_SUCCESS: 12,
+    SUCCESS: 6,
+    PARTIAL: 3,
+    FAILURE: 1,
+    CRITICAL_FAILURE: 1,
+}
+"""Erfahrung je Probenausgang. Auch ein Fehlschlag bringt einen Punkt: am
+Spieltisch soll sich jede gewagte Handlung nach einem Schritt anfuehlen,
+nicht nur die gelungene. Der Abstand zwischen den Stufen bleibt trotzdem
+deutlich, damit Erfolg sich lohnt."""
+
+XP_QUEST_COMPLETED = 40
+XP_MAIN_QUEST_COMPLETED = 100
+"""Erfahrung fuer die ganze Gruppe, wenn eine Quest abgeschlossen wird --
+der greifbarste Fortschrittsmoment einer Runde und deshalb bewusst ein
+Vielfaches einer einzelnen Probe."""
+
+
+def experience_for_next_level(level: int) -> int:
+    """Erfahrung, die von Stufe ``level`` zur naechsten noetig ist.
+
+    Bewusst flach gehalten: mit ~6 XP je gelungener Probe und 40 XP je
+    abgeschlossener Quest liegt der erste Aufstieg in Reichweite eines
+    Spielabends. Die fruehere Schwelle ``level * 100`` war zusammen mit
+    Erfahrung nur bei kritischen Erfolgen praktisch unerreichbar -- ein
+    Fortschrittskanal, den es zwar gab, den aber niemand je zu sehen bekam.
+    """
+    return 60 + (level - 1) * 40
 
 
 @dataclass(slots=True)
@@ -77,6 +122,10 @@ class ActionRequest:
     text: str
     target_ref: str | None = None
     payload: dict[str, object] = field(default_factory=dict)
+    stat_hint: str | None = None
+    """Vom Spieler selbst gewaehltes Attribut oder frei benannter Skill,
+    gegen den die Handlung gewuerfelt wird. Ungueltige oder fehlende Werte
+    fallen auf die feste Zuordnung nach Handlungsart zurueck."""
 
 
 @dataclass(slots=True)
@@ -120,8 +169,21 @@ class RuleSet(Protocol):
 
 
 def ability_modifier(value: int) -> int:
-    """Klassischer Attributsmodifikator."""
+    """Klassischer Attributsmodifikator fuer die vier Grundattribute."""
     return (value - 10) // 2
+
+
+def skill_modifier(value: int) -> int:
+    """Bonus aus einem frei benannten, selbst gewaehlten Skill.
+
+    Skill-Punkte stammen aus einem gemeinsamen Budget von 100 Punkten, das
+    beim Erstellen auf beliebig viele selbst benannte Skills verteilt wird
+    (siehe CharacterService.set_skills) -- eine andere Skala als die
+    klassischen Attributswerte (typischerweise 8-20), daher ein eigener,
+    grober Umrechner statt ability_modifier. Gedeckelt, damit ein einzelner
+    Skill mit dem vollen Budget eine Probe nicht automatisch gewinnt.
+    """
+    return min(8, value // 10)
 
 
 class ClassicRuleSet:
@@ -200,6 +262,12 @@ class ClassicRuleSet:
 
         kind = request.kind if request.kind in ACTION_KINDS else "custom"
 
+        if kind == "wait":
+            # Bewusstes Nichtstun: immer erlaubt, kostet nichts und braucht
+            # keine Probe -- es gibt nichts zu wuerfeln, wenn niemand etwas
+            # versucht.
+            return ActionPlan(allowed=True)
+
         if kind == "use_item":
             item = str(request.payload.get("item") or request.target_ref or "").strip()
             if not item:
@@ -229,14 +297,24 @@ class ClassicRuleSet:
                 )
             )
 
-        stat_key = self._STAT_FOR_KIND.get(kind, "intelligence")
+        stat_key = (
+            request.stat_hint
+            if request.stat_hint
+            and request.stat_hint in actor.stats
+            and request.stat_hint not in RESOURCE_POOL_KEYS
+            else self._STAT_FOR_KIND.get(kind, "intelligence")
+        )
         target = DIFFICULTY_TARGETS.get(difficulty, DIFFICULTY_TARGETS["normal"])
         if complexity == "crunchy":
             target += 1
         elif complexity == "narrative":
             target -= 1
 
-        bonus = ability_modifier(actor.stat(stat_key)) + (actor.level - 1) // 2
+        raw_value = actor.stat(stat_key)
+        modifier = (
+            ability_modifier(raw_value) if stat_key in KNOWN_STATS else skill_modifier(raw_value)
+        )
+        bonus = modifier + (actor.level - 1) // 2
         check = CheckSpec(
             stat=stat_key,
             notation="1d20",
@@ -249,9 +327,20 @@ class ClassicRuleSet:
     def outcome_effects(
         self, request: ActionRequest, actor: CharacterView, result: DiceResult | None
     ) -> list[ch.StateChange]:
-        if result is None or result.degree not in (CRITICAL_FAILURE, CRITICAL_SUCCESS):
+        if result is None:
             return []
         effects: list[ch.StateChange] = []
+        experience = XP_PER_DEGREE.get(result.degree, 0)
+        if experience:
+            effects.append(
+                ch.GrantExperience(
+                    character=actor.name,
+                    amount=experience,
+                    reason=f"Probe: {result.degree}",
+                )
+            )
+        if result.degree not in (CRITICAL_FAILURE, CRITICAL_SUCCESS):
+            return effects
         if result.degree == CRITICAL_FAILURE and request.kind in ("attack", "sneak", "flee"):
             effects.append(
                 ch.AdjustStat(
@@ -266,10 +355,6 @@ class ClassicRuleSet:
                 ch.AdjustStat(
                     character=actor.name, stat="mana", delta=-2, reason="Magischer Patzer"
                 )
-            )
-        if result.degree == CRITICAL_SUCCESS:
-            effects.append(
-                ch.GrantExperience(character=actor.name, amount=10, reason="Kritischer Erfolg")
             )
         return effects
 

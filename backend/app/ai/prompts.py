@@ -70,7 +70,68 @@ Jede Aenderung darf ein Feld "reason" mit einer kurzen Begruendung enthalten.
 Vorschlaege mit unbekannten Namen werden verworfen.
 """
 
-_SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, custom"
+_SUGGESTION_KINDS = "attack, investigate, talk, sneak, cast, use_item, flee, wait, custom"
+
+STALL_ESCALATION_THRESHOLD = 2
+"""Ab so vielen erfolglosen Zuegen in Folge (games.stall_streak) muss die
+KI aktiv eine Wendung liefern statt weiter nur Atmosphaere zu beschreiben."""
+
+STAT_FIT_SYSTEM = """\
+Du bist ein Regel-Assistent fuer ein Pen-&-Paper-Rollenspiel. Ein Spieler hat
+eine frei formulierte Handlung eingegeben und selbst entschieden, gegen
+welches Attribut oder welchen selbst benannten Skill sie gewuerfelt wird.
+Deine einzige Aufgabe: beurteilen, ob diese Wahl inhaltlich zur Handlung
+passt -- du entscheidest nicht, was gewuerfelt wird, nur wie plausibel die
+Wahl ist.
+
+Maszstaebe:
+- "good": das Attribut/der Skill passt nachvollziehbar zur Handlung.
+- "poor": es besteht ein loser Zusammenhang, aber die Wahl ist nicht die
+  naheliegendste -- die Probe wird dadurch schwerer, aber bleibt moeglich.
+- "auto_fail": das Attribut/der Skill hat erkennbar nichts mit der Handlung
+  zu tun -- die Handlung misslingt ohne Wurf.
+
+Antworte ausschliesslich mit einem einzigen JSON-Objekt, ohne erklaerenden
+Text davor oder danach: {"fit": "good|poor|auto_fail"}
+"""
+
+
+PREMISE_SYSTEM = """\
+Du hilfst dabei, eine neue Pen-&-Paper-Runde vorzustellen, noch bevor die
+eigentliche Welt entsteht. Deine einzige Aufgabe: aus den gewaehlten
+Einstellungen eine kurze, grobe Vorschau auf die kommende Welt schreiben,
+die den Spielern vor der Charaktererstellung Orientierung gibt.
+
+Regeln:
+1. Bleibe bewusst grob und atmosphaerisch -- Genre, Ton, Ausgangslage.
+2. Erfinde keine konkreten Orte, Namen, NSC oder Fakten. Die eigentliche
+   Welt mit Orten, NSC und Quests entsteht unabhaengig davon separat, sobald
+   die Runde tatsaechlich startet; nichts hier darf ihr spaeter
+   widersprechen.
+3. Zwei bis vier Saetze, keine Aufzaehlung.
+4. Antworte ausschliesslich mit einem einzigen JSON-Objekt, ohne
+   erklaerenden Text davor oder danach.
+"""
+
+
+def build_premise_prompt(settings: dict[str, Any]) -> str:
+    """Auftrag: kurze Weltvorschau vor der Charaktererstellung."""
+    payload = json.dumps(settings, ensure_ascii=False, indent=2, default=str)
+    return (
+        "## Gewaehlte Einstellungen\n```json\n"
+        + payload
+        + "\n```\n\n## Auftrag\nSchreibe die Vorschau.\n\n"
+        '## Antwortformat (JSON)\n{"premise": "..."}\n'
+    )
+
+
+def build_stat_fit_prompt(text: str, stat: str) -> str:
+    """Auftrag: Passung von Handlung und selbst gewaehltem Attribut beurteilen."""
+    return (
+        f'Handlung: "{text.strip()}"\n'
+        f'Gewaehltes Attribut/Skill: "{stat.strip()}"\n\n'
+        "Wie gut passt das gewaehlte Attribut zu dieser Handlung?"
+    )
 
 
 def system_prompt(language: str = "de") -> str:
@@ -84,10 +145,16 @@ def build_world_prompt(context: dict[str, Any]) -> str:
     return _compose(
         context,
         task=(
-            "Erzeuge den Auftakt der Kampagne: eine kurze Weltbeschreibung, die erste Szene, "
-            "mindestens zwei Orte, mindestens einen NSC mit Geheimnis, eine Hauptquest sowie "
-            "die dazugehoerigen Fakten und Wissenseintraege. Platziere alle Charaktere per "
-            "'character.move' am Startort. Gib jedem Charakter vier Handlungsvorschlaege."
+            "Erzeuge den Auftakt der Kampagne. Sei dabei bewusst ausschweifend: lege "
+            "moeglichst viel schon jetzt als 'changes' fest, statt es spaeter waehrend "
+            "des Spiels improvisieren zu muessen. Konkret mindestens: vier Orte (nicht "
+            "nur der Startort -- auch benachbarte, noch unentdeckte Orte fuer spaetere "
+            "Erkundung), drei NSC mit je eigenem Geheimnis oder Interesse, eine "
+            "Hauptquest sowie zwei weitere Nebenquests, und mehrere Fakten (oeffentliche "
+            "Ausgangslage UND geheime Hintergruende, die spaeter aufgedeckt werden "
+            "koennen). Dazu eine kurze Weltbeschreibung und die erste Szene. Platziere "
+            "alle Charaktere per 'character.move' am Startort. Gib jedem Charakter vier "
+            "Handlungsvorschlaege."
         ),
         extra=(
             'Zusaetzliches Feld: "world_summary" (2-3 Saetze).\n'
@@ -96,16 +163,72 @@ def build_world_prompt(context: dict[str, Any]) -> str:
     )
 
 
+ARC_INSTRUCTIONS: dict[str, str] = {
+    "setup": (
+        "Die Runde steht am Anfang ihres Bogens: lege Faeden aus, stelle "
+        "Personen und Orte vor, baue die Ausgangslage auf."
+    ),
+    "rising": (
+        "Die Runde ist in der Verwicklung: bringe die Hauptquest sichtbar "
+        "voran, erhoehe den Einsatz, decke Teilwahrheiten auf. Jeder Zug "
+        "soll die Gruppe erkennbar naeher an ihr Ziel oder tiefer in die "
+        "Verwicklung bringen."
+    ),
+    "climax": (
+        "Die Runde naehert sich dem Hoehepunkt: draenge auf die Entscheidung "
+        "zu, an der sich die Hauptquest entscheidet. Keine neuen, "
+        "unabhaengigen Nebenstraenge mehr -- fuehre bestehende zusammen."
+    ),
+    "resolution": (
+        "Der eingeplante Zeitrahmen dieser Runde ist erreicht oder "
+        "ueberschritten: fuehre die Hauptquest jetzt zu einem Ende. Loese "
+        "offene Faeden auf, statt neue zu eroeffnen."
+    ),
+}
+"""Anweisung je Phase des Spannungsbogens (siehe services.context.arc_phase).
+Ohne sie hat die KI keinen Zielhorizont und keinen Grund, eine Geschichte je
+zum Abschluss zu bringen -- sie kann beliebig lange in der Verwicklung
+verweilen."""
+
+_QUEST_PROGRESS_RULE = (
+    "Sobald eine Handlung eine Quest beruehrt, halte den neuen Stand per "
+    "'quest.update' fest -- mit einem konkreten 'note', der beschreibt, was "
+    "die Gruppe jetzt erreicht hat oder als naechstes braucht. Dieser Vermerk "
+    "ist im naechsten Zug deine einzige Erinnerung daran, wo die Gruppe in "
+    "der Quest steht; ohne ihn beginnst du sie faktisch von vorn."
+)
+
+
 def build_turn_prompt(context: dict[str, Any]) -> str:
     """Auftrag: Ergebnisse bewerten und die Geschichte fortsetzen."""
+    task = (
+        "Die Spieler haben gehandelt. Die Ergebnisse der Proben stehen unter "
+        "'action_results' und sind bindend - erfinde keine anderen Ausgaenge. "
+        "Erzaehle, was daraus folgt, und bereite die naechste Entscheidung vor. "
+        "Gib jedem lebenden Charakter drei bis fuenf Handlungsvorschlaege. "
+        + _QUEST_PROGRESS_RULE
+    )
+    arc = context.get("arc")
+    if isinstance(arc, dict):
+        instruction = ARC_INSTRUCTIONS.get(str(arc.get("phase")))
+        if instruction:
+            task += f" {instruction}"
+    stall_streak = int(context.get("stall_streak") or 0)
+    if stall_streak >= STALL_ESCALATION_THRESHOLD:
+        task += (
+            f" WICHTIG: 'stall_streak' steht bei {stall_streak} -- die Gruppe kommt seit "
+            "mehreren Zuegen in Folge nicht voran (kein Erfolg, keine gewertete Handlung "
+            "gelungen). Beschreibe diesmal NICHT nur erneut Stimmung oder Bedrohung. "
+            "Liefere stattdessen eine konkrete, spielrelevante Wendung, die die Gruppe "
+            "wirklich weiterbringt -- ein greifbarer Hinweis, ein Fehler oder eine "
+            "Unachtsamkeit des Gegners, ein neuer erreichbarer Ort oder Ausweg, ein "
+            "Zeitdruck, der zum Handeln zwingt. Bilde das als 'changes' ab (z. B. "
+            "location.discover, fact.assert, knowledge.grant, entity.update), nicht nur "
+            "als Prosa ohne Aenderung."
+        )
     return _compose(
         context,
-        task=(
-            "Die Spieler haben gehandelt. Die Ergebnisse der Proben stehen unter "
-            "'action_results' und sind bindend - erfinde keine anderen Ausgaenge. "
-            "Erzaehle, was daraus folgt, und bereite die naechste Entscheidung vor. "
-            "Gib jedem lebenden Charakter drei bis fuenf Handlungsvorschlaege."
-        ),
+        task=task,
         extra=f"Handlungsarten: {_SUGGESTION_KINDS}",
     )
 

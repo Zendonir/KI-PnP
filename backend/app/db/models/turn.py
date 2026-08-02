@@ -20,7 +20,22 @@ class Turn(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Eine Spielrunde (ein Zug aller Spieler)."""
 
     __tablename__ = "turns"
-    __table_args__ = (sa.UniqueConstraint("game_id", "number", name="uq_turns_game_number"),)
+    __table_args__ = (
+        sa.UniqueConstraint("game_id", "number", name="uq_turns_game_number"),
+        # Hoechstens ein laufender Zug je Ort -- mehrere gleichzeitig
+        # "collecting" Zuege pro Spiel sind erlaubt, aber nie zwei am
+        # selben Ort (Split-Party). Partieller Index statt einer
+        # gewoehnlichen Unique-Constraint, weil abgeschlossene Zuege am
+        # selben Ort sich sonst gegenseitig blockieren wuerden.
+        sa.Index(
+            "uq_turns_one_collecting_per_location",
+            "game_id",
+            "location_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'collecting'"),
+            postgresql_where=sa.text("status = 'collecting'"),
+        ),
+    )
 
     game_id: Mapped[uuid.UUID] = mapped_column(
         sa.ForeignKey("games.id", ondelete="CASCADE"), index=True
@@ -32,12 +47,77 @@ class Turn(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         sa.ForeignKey("locations.id", ondelete="SET NULL"), nullable=True
     )
     resolved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    revealed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """Wann Erzaehlung, Ton und Wuerfelergebnisse dieses Zugs fuer die ganze
+    Gruppe sichtbar wurden -- erst wenn alle erwarteten Spieler ihr
+    Wuerfel-Popup bestaetigt haben (siehe TurnAck) oder die Spielleitung
+    vorzeitig aufdeckt. Getrennt von resolved_at (mechanische Aufloesung,
+    passiert sofort), damit niemand vorzeitig weiterliest oder -hoert."""
     suggestions: Mapped[dict[str, Any]] = mapped_column(default=dict)
     """Handlungsvorschlaege je Charaktername fuer diese Runde."""
 
     actions: Mapped[list[Action]] = relationship(
         back_populates="turn", cascade="all, delete-orphan", lazy="selectin"
     )
+
+
+class TurnAck(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Bestaetigung eines Spielers, die Wuerfelergebnisse eines Zugs gesehen
+    zu haben. Sobald alle erwarteten Spieler bestaetigt haben, gilt der Zug
+    als aufgedeckt (Turn.revealed_at)."""
+
+    __tablename__ = "turn_acks"
+    __table_args__ = (sa.UniqueConstraint("turn_id", "player_id", name="uq_turn_ack"),)
+
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("turns.id", ondelete="CASCADE"), index=True
+    )
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
+
+
+class GroupProposal(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Eine als Gruppenereignis markierte Handlung ("wir gehen dorthin").
+
+    Andere aktive Spieler am selben Ort werden gefragt, ob sie mitmachen
+    wollen (siehe GroupProposalResponse). Wer zustimmt, teilt sich
+    dieselbe Handlung (kind/text/stat) -- kein eigener Text noetig --,
+    wuerfelt aber mit eigenem Charakterwert und bekommt einen Bonus. Genau
+    ein Vorschlag je Zug (turn_id unique): ein zweiter Versuch im selben
+    Zug wird ignoriert, statt Vorschlaege zu verschachteln."""
+
+    __tablename__ = "group_proposals"
+
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("turns.id", ondelete="CASCADE"), unique=True
+    )
+    initiator_player_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("players.id", ondelete="CASCADE")
+    )
+    initiator_character_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("characters.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(sa.String(30))
+    text: Mapped[str] = mapped_column(sa.Text)
+    stat: Mapped[str | None] = mapped_column(sa.String(60), nullable=True)
+
+
+class GroupProposalResponse(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Antwort einer Person auf einen Gruppenvorschlag."""
+
+    __tablename__ = "group_proposal_responses"
+    __table_args__ = (
+        sa.UniqueConstraint("proposal_id", "player_id", name="uq_group_proposal_response"),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("group_proposals.id", ondelete="CASCADE"), index=True
+    )
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
+    accepted: Mapped[bool] = mapped_column(sa.Boolean)
 
 
 class Action(UUIDPrimaryKeyMixin, TimestampMixin, Base):

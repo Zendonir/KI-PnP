@@ -6,6 +6,7 @@ import type {
   Game,
   GameSettings,
   GameState,
+  RuntimeSettings,
   SessionResponse,
   Summary,
 } from "./types";
@@ -95,17 +96,58 @@ export const api = {
     },
   ) => request<Character>(`/games/${gameId}/characters`, { method: "POST", body: payload, token }),
 
+  setCharacterSkills: (
+    gameId: string,
+    token: string,
+    skills: { name: string; points: number }[],
+  ) =>
+    request<Character>(`/games/${gameId}/characters/me/skills`, {
+      method: "PUT",
+      body: { skills },
+      token,
+    }),
+
   startGame: (gameId: string, token: string) =>
     request<GameState>(`/games/${gameId}/start`, { method: "POST", token }),
 
   submitAction: (
     gameId: string,
     token: string,
-    payload: { kind: string; text: string; target_ref?: string; payload?: Record<string, unknown> },
+    payload: {
+      kind: string;
+      text: string;
+      target_ref?: string;
+      payload?: Record<string, unknown>;
+      stat?: string;
+      group_event?: boolean;
+    },
   ) => request<unknown>(`/games/${gameId}/actions`, { method: "POST", body: payload, token }),
 
-  resolveTurn: (gameId: string, token: string) =>
-    request<unknown>(`/games/${gameId}/resolve`, { method: "POST", token }),
+  resolveTurn: (gameId: string, token: string, turnId?: string) =>
+    request<unknown>(
+      `/games/${gameId}/resolve${turnId ? `?turn_id=${turnId}` : ""}`,
+      { method: "POST", token },
+    ),
+
+  ackTurn: (gameId: string, token: string, turnId: string) =>
+    request<GameState>(`/games/${gameId}/turns/${turnId}/ack`, { method: "POST", token }),
+
+  forceReveal: (gameId: string, token: string, turnId: string) =>
+    request<GameState>(`/games/${gameId}/turns/${turnId}/reveal`, { method: "POST", token }),
+
+  respondIntervention: (gameId: string, token: string, interventionId: string, accepted: boolean) =>
+    request<unknown>(`/games/${gameId}/interventions/${interventionId}/respond`, {
+      method: "POST",
+      body: { accepted },
+      token,
+    }),
+
+  respondGroupProposal: (gameId: string, token: string, proposalId: string, accepted: boolean) =>
+    request<GameState>(`/games/${gameId}/group-proposals/${proposalId}/respond`, {
+      method: "POST",
+      body: { accepted },
+      token,
+    }),
 
   renarrate: (gameId: string, token: string) =>
     request<unknown>(`/games/${gameId}/renarrate`, { method: "POST", token }),
@@ -149,6 +191,21 @@ export const api = {
     }
     return URL.createObjectURL(await response.blob());
   },
+
+  adminStatus: () => request<{ enabled: boolean }>("/settings/status"),
+
+  adminLogin: (password: string) =>
+    request<{ token: string; expires_at: string }>("/settings/login", {
+      method: "POST",
+      body: { password },
+    }),
+
+  getAdminSettings: (token: string) => request<RuntimeSettings>("/settings", { token }),
+
+  updateAdminSettings: (
+    token: string,
+    payload: { tts_voice?: string | null; tts_speed?: number | null },
+  ) => request<RuntimeSettings>("/settings", { method: "PUT", body: payload, token }),
 };
 
 /** WebSocket-Adresse fuer die Echtzeit-Synchronisation. */

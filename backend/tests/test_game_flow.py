@@ -6,6 +6,7 @@ Handlungen einreichen, Zug aufloesen, Ereignisprotokoll und Sichtbarkeit.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -14,7 +15,7 @@ import sqlalchemy as sa
 from httpx import AsyncClient
 
 from app.core.container import Container
-from app.db.models import Event, Fact, Game
+from app.db.models import Character, Event, Fact, Game, Location
 
 from .conftest import auth
 
@@ -54,6 +55,41 @@ async def _create_character(
     return response.json()
 
 
+def _character_id(state: dict[str, Any], player_id: str) -> uuid.UUID:
+    """Findet die Charakter-ID zu einer Spieler-ID im Zustand."""
+    for character in state["characters"]:
+        if character["player_id"] == player_id:
+            return uuid.UUID(character["id"])
+    raise AssertionError(f"Kein Charakter fuer Spieler {player_id}")
+
+
+async def _create_location(container: Container, game_id: uuid.UUID, name: str) -> uuid.UUID:
+    """Legt einen weiteren Ort direkt in der Datenbank an.
+
+    Der Mock-Spielleiter bewegt beim Weltaufbau alle Charaktere an denselben
+    Ort und laesst sie waehrend gewoehnlicher Zuege nirgendwo hin -- fuer
+    Tests zum Aufteilen der Gruppe wird der Ortswechsel deshalb direkt
+    gesetzt, statt zu versuchen, ihn ueber eine bestimmte KI-Antwort zu
+    erzwingen.
+    """
+    async with container.database.session() as session:
+        location = Location(game_id=game_id, name=name, description=name, is_discovered=True)
+        session.add(location)
+        await session.commit()
+        await session.refresh(location)
+        return location.id
+
+
+async def _move_character(
+    container: Container, character_id: uuid.UUID, location_id: uuid.UUID | None
+) -> None:
+    async with container.database.session() as session:
+        character = await session.get(Character, character_id)
+        assert character is not None
+        character.location_id = location_id
+        await session.commit()
+
+
 class TestLobby:
     async def test_create_returns_join_link_and_token(self, client: AsyncClient) -> None:
         session = await _create_game(client)
@@ -62,6 +98,14 @@ class TestLobby:
         assert session["join_url"].endswith(session["game"]["code"])
         assert session["player"]["role"] == "host"
         assert session["token"]
+
+    async def test_create_returns_a_world_premise(self, client: AsyncClient) -> None:
+        """Noch vor der Charaktererstellung soll eine kurze Weltvorschau
+        stehen, damit Spieler wissen, was sie erwartet (siehe
+        GameService._generate_premise)."""
+        session = await _create_game(client)
+        assert session["game"]["premise"]
+        assert "aschenfurt" in session["game"]["premise"].lower()
 
     async def test_qr_code_is_svg(self, client: AsyncClient) -> None:
         session = await _create_game(client)
@@ -196,6 +240,26 @@ class TestGameStart:
         assert state["quests"], "Es muss eine Startquest geben"
         assert state["turn"]["my_suggestions"], "Jeder Charakter braucht Handlungsvorschlaege"
 
+    async def test_world_bootstrap_is_elaborate(
+        self, started_game: dict[str, Any], container: Container
+    ) -> None:
+        """Der Weltaufbau soll ausschweifend sein: mehr als das noetige
+        Minimum, damit spaetere Zuege auf Vorhandenem aufbauen koennen,
+        statt improvisieren zu muessen (siehe prompts.build_world_prompt).
+        Orte werden Spielern erst nach Entdeckung angezeigt (state.locations
+        zeigt darum bewusst nur den Startort) -- die Fuelle wird deshalb
+        direkt in der Datenbank geprueft, nicht ueber den Spielzustand."""
+        state = started_game["state"]
+        assert len(state["entities"]) >= 3
+        assert len(state["quests"]) >= 3
+
+        game_id = uuid.UUID(started_game["game_id"])
+        async with container.database.session() as session:
+            total_locations = (
+                await session.execute(sa.select(Location).where(Location.game_id == game_id))
+            ).scalars().all()
+        assert len(total_locations) >= 4
+
     async def test_characters_are_placed(self, started_game: dict[str, Any]) -> None:
         for character in started_game["state"]["characters"]:
             assert character["location"], f"{character['name']} hat keinen Ort"
@@ -208,6 +272,30 @@ class TestGameStart:
             headers=auth(started_game["host"]["token"]),
         )
         assert response.status_code == 409
+
+    async def test_lobby_state_poll_does_not_create_premature_turn(
+        self, client: AsyncClient
+    ) -> None:
+        """Regression: ein /state-Abgleich waehrend der Lobby-Wartezeit legte
+        frueher einen verwaisten Zug "Nummer 1" an, obwohl die Runde noch gar
+        nicht lief -- der echte Rundenstart kollidierte dann mit dessen
+        Nummer und schlug mit einem Datenbankfehler fehl."""
+        session = await _create_game(client)
+        game_id = session["game"]["id"]
+        await _create_character(client, game_id, session["token"], "Kell", "Krieger")
+
+        # Simuliert den periodischen Abgleich, waehrend die Spielleitung noch
+        # in der Lobby wartet.
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(session["token"]))
+        ).json()
+        assert state["turn"] is None, "Vor dem Start darf noch kein Zug existieren"
+
+        response = await client.post(
+            f"/api/v1/games/{game_id}/start", headers=auth(session["token"])
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["turn"]["number"] == 1
 
 
 class TestTurnLoop:
@@ -242,6 +330,23 @@ class TestTurnLoop:
         assert state["turn"]["number"] == 2, "Nach allen Einreichungen startet Zug 2"
         assert state["dice_rolls"], "Es muss gewuerfelt worden sein"
         assert len(state["narrations"]) >= 2
+
+    async def test_wait_produces_no_dice_roll(
+        self, client: AsyncClient, started_game: dict[str, Any]
+    ) -> None:
+        game_id = started_game["game_id"]
+        host = started_game["host"]
+        response = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "wait", "text": "Ich beobachte die Lage."},
+            headers=auth(host["token"]),
+        )
+        assert response.status_code == 201, response.text
+        await client.post(f"/api/v1/games/{game_id}/resolve", headers=auth(host["token"]))
+        state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert not state["dice_rolls"], "Nichtstun braucht keine Probe"
 
     async def test_dice_rolls_are_recorded_with_difficulty(
         self, client: AsyncClient, started_game: dict[str, Any]
@@ -483,3 +588,304 @@ class TestAdmin:
             ).scalar_one()
         assert game is not None and game.status == "finished"
         assert count > 0
+
+
+class TestSplitParty:
+    """Die Gruppe teilt sich auf mehrere Orte -- jeder Ort loest unabhaengig auf.
+
+    Der Mock-Spielleiter bewegt Charaktere nur beim Weltaufbau (alle an
+    denselben Ort) und nie waehrend eines gewoehnlichen Zuges. Ortswechsel
+    werden hier deshalb direkt in der Datenbank gesetzt, nicht ueber eine
+    bestimmte KI-Antwort erzwungen -- unabhaengig davon testbar, wie ein
+    Charakter an einen Ort gelangt ist.
+    """
+
+    async def test_getrennte_orte_loesen_unabhaengig_auf(
+        self, client: AsyncClient, started_game: dict[str, Any], container: Container
+    ) -> None:
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+        guest_character = _character_id(started_game["state"], guest["player"]["id"])
+
+        cave = await _create_location(container, uuid.UUID(game_id), "Hoehle")
+        await _move_character(container, guest_character, cave)
+        start_number = started_game["state"]["turn"]["number"]
+
+        # Nur der Gastgeber ist noch am Startort -- sein Zug loest allein auf,
+        # ohne auf den (jetzt anderswo befindlichen) Gast zu warten.
+        first = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "investigate", "text": "Ich untersuche den Brunnen."},
+            headers=auth(host["token"]),
+        )
+        assert first.status_code == 201, first.text
+
+        host_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert host_state["turn"]["number"] != start_number, (
+            "Der Startort muss allein aufgeloest haben"
+        )
+
+        # Der Gast an der Hoehle hat einen eigenen, unberuehrten Zug -- noch
+        # niemand hat dort etwas eingereicht.
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+        assert guest_state["turn"] is not None
+        assert guest_state["turn"]["location_id"] == str(cave)
+        assert guest_state["turn"]["id"] != host_state["turn"]["id"]
+        assert guest_state["turn"]["status"] == "collecting"
+        cave_number_before = guest_state["turn"]["number"]
+
+        # Der Gast reicht seine Handlung ein -- da er der einzige an diesem
+        # Ort ist, loest sein Zug ebenfalls sofort auf.
+        second = await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "sneak", "text": "Ich erkunde die Hoehle."},
+            headers=auth(guest["token"]),
+        )
+        assert second.status_code == 201, second.text
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+        assert guest_state["turn"]["number"] != cave_number_before, (
+            "Auch die Hoehle muss jetzt weitergezogen sein"
+        )
+        # Der Startort ist davon unberuehrt -- jeder Ort zaehlt fuer sich.
+        assert (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()["turn"]["id"] == host_state["turn"]["id"]
+
+    async def test_automatisches_einreihen(
+        self, client: AsyncClient, started_game: dict[str, Any], container: Container
+    ) -> None:
+        game_id = started_game["game_id"]
+        guest = started_game["guest"]
+
+        ben = await _join(client, started_game["host"]["game"]["code"], "Ben")
+        await _create_character(client, game_id, ben["token"], "Rill", "Schurke")
+
+        guest_character = _character_id(started_game["state"], guest["player"]["id"])
+        ben_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(ben["token"]))
+        ).json()
+        ben_character = _character_id(ben_state, ben["player"]["id"])
+
+        cave = await _create_location(container, uuid.UUID(game_id), "Hoehle")
+        await _move_character(container, guest_character, cave)
+        await _move_character(container, ben_character, cave)
+
+        # Der Gast reicht als Erste am neuen Ort ein -- ihr Zug entsteht neu.
+        await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "investigate", "text": "Ich leuchte die Wand ab."},
+            headers=auth(guest["token"]),
+        )
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+        cave_turn_id = guest_state["turn"]["id"]
+        assert guest_state["turn"]["status"] == "collecting", (
+            "Duerfte noch nicht aufloesen -- Ben ist auch hier und hat noch nicht eingereicht"
+        )
+
+        # Ben ist am selben Ort und findet automatisch denselben Zug vor --
+        # ganz ohne eigenes Zutun, allein weil sein Charakter dort steht.
+        ben_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(ben["token"]))
+        ).json()
+        assert ben_state["turn"]["id"] == cave_turn_id
+
+        # Reicht Ben nun ein, sind beide am Ort vertreten -- der Zug loest auf.
+        await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "sneak", "text": "Ich horche in den Gang."},
+            headers=auth(ben["token"]),
+        )
+        ben_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(ben["token"]))
+        ).json()
+        assert ben_state["turn"]["id"] != cave_turn_id, "Der Hoehlen-Zug muss weitergezogen sein"
+
+    async def test_get_or_create_ist_idempotent(
+        self, started_game: dict[str, Any], container: Container
+    ) -> None:
+        """Zwei Anfragen fuer denselben, noch nie besuchten Ort ergeben nur einen Zug.
+
+        Direkter Aufruf am Dienst statt ueber die API: das ist genau der
+        Kern des Automatisch-Einreihen/Wiedervereinen-Mechanismus, unabhaengig
+        davon pruefbar, wie ein Charakter an den Ort gelangt.
+        """
+        from app.services.events import EventRecorder
+        from app.services.turn_service import TurnService
+
+        game_id = uuid.UUID(started_game["game_id"])
+        guest_character = _character_id(
+            started_game["state"], started_game["guest"]["player"]["id"]
+        )
+        cave = await _create_location(container, game_id, "Hoehle")
+        await _move_character(container, guest_character, cave)
+
+        async with container.database.session() as session:
+            game = await session.get(Game, game_id)
+            assert game is not None
+            recorder = EventRecorder(session, container.hub)
+            service = TurnService(
+                session, container.settings, container.llm, container.tts, container.hub, recorder
+            )
+
+            first = await service._sync_location_turns(
+                game, [guest_character], carry_scene_title="Test"
+            )
+            await session.commit()
+            second = await service._sync_location_turns(
+                game, [guest_character], carry_scene_title="Test"
+            )
+            await session.commit()
+
+            assert len(first) == 1 and len(second) == 1
+            reused = first[0][0].id == second[0][0].id
+            assert reused, "Der zweite Aufruf muss den Zug wiederverwenden"
+            assert first[0][1] is True, "Erster Aufruf legt neu an"
+            assert second[0][1] is False, "Zweiter Aufruf findet ihn schon vor"
+
+    async def test_spielleitung_sieht_alle_orte(
+        self, client: AsyncClient, started_game: dict[str, Any], container: Container
+    ) -> None:
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+        guest_character = _character_id(started_game["state"], guest["player"]["id"])
+
+        cave = await _create_location(container, uuid.UUID(game_id), "Hoehle")
+        await _move_character(container, guest_character, cave)
+        # Beide Orte muessen ohne Aufloesen einen Zug haben, damit die
+        # Uebersicht etwas zu zeigen hat.
+        await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+
+        host_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert host_state["active_location_turns"] is not None
+        assert len(host_state["active_location_turns"]) == 2
+        locations = {entry["location_id"] for entry in host_state["active_location_turns"]}
+        assert locations == {host_state["turn"]["location_id"], str(cave)}
+
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+        assert not guest_state["active_location_turns"]
+
+    async def test_turn_id_gezielt_aufloesen(
+        self, client: AsyncClient, started_game: dict[str, Any], container: Container
+    ) -> None:
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+        guest_character = _character_id(started_game["state"], guest["player"]["id"])
+
+        cave = await _create_location(container, uuid.UUID(game_id), "Hoehle")
+        await _move_character(container, guest_character, cave)
+        # Zug an der Hoehle erst einmal entstehen lassen, ohne ihn aufzuloesen.
+        await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+
+        host_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+        cave_turn_id = guest_state["turn"]["id"]
+        home_turn_id = host_state["turn"]["id"]
+
+        # Die Spielleitung loest gezielt nur den Hoehlen-Zug auf -- der
+        # Startort bleibt unberuehrt, obwohl dort noch niemand eingereicht hat.
+        response = await client.post(
+            f"/api/v1/games/{game_id}/resolve?turn_id={cave_turn_id}",
+            headers=auth(host["token"]),
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] != cave_turn_id, "Es muss ein neuer Folgezug sein"
+
+        host_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        assert host_state["turn"]["id"] == home_turn_id, "Der Startort darf nicht betroffen sein"
+
+    async def test_narration_bleibt_ortsgebunden(
+        self, client: AsyncClient, started_game: dict[str, Any], container: Container
+    ) -> None:
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+        guest_character = _character_id(started_game["state"], guest["player"]["id"])
+
+        cave = await _create_location(container, uuid.UUID(game_id), "Hoehle")
+        await _move_character(container, guest_character, cave)
+
+        await client.post(
+            f"/api/v1/games/{game_id}/actions",
+            json={"kind": "investigate", "text": "Ich untersuche den Brunnen."},
+            headers=auth(host["token"]),
+        )
+        host_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(host["token"]))
+        ).json()
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+
+        host_texts = {n["text"] for n in host_state["narrations"] if n["kind"] == "public"}
+        guest_texts = {n["text"] for n in guest_state["narrations"] if n["kind"] == "public"}
+        assert host_texts, "Der Startort muss eine neue Erzaehlung haben"
+        assert host_texts.isdisjoint(guest_texts), (
+            "Die Erzaehlung vom Startort darf nicht an der Hoehle auftauchen"
+        )
+
+    async def test_gleichzeitige_aufloesung_verschiedener_orte_race_frei(
+        self, client: AsyncClient, started_game: dict[str, Any], container: Container
+    ) -> None:
+        """Zwei unabhaengige Orte gleichzeitig aufgeloest -- keine Kollision.
+
+        Prueft die Absicherung aus _lock_game: der Ereigniszaehler des Spiels
+        darf auch bei echt gleichzeitigen Anfragen nie Luecken oder
+        Dopplungen bekommen. Auf SQLite (hier) faellt with_for_update auf ein
+        wirkungsloses No-Op zurueck, SQLite serialisiert Schreiber aber
+        ohnehin auf Engine-Ebene -- ein echter Stresstest der Sperre selbst
+        braucht Postgres. Was sich hier zuverlaessig pruefen laesst: die
+        Codepfade beider gleichzeitigen Aufloesungen vertragen sich, ohne
+        Ausnahme und ohne beschaedigtes Ereignisprotokoll.
+        """
+        game_id = started_game["game_id"]
+        host, guest = started_game["host"], started_game["guest"]
+        guest_character = _character_id(started_game["state"], guest["player"]["id"])
+
+        cave = await _create_location(container, uuid.UUID(game_id), "Hoehle")
+        await _move_character(container, guest_character, cave)
+        guest_state = (
+            await client.get(f"/api/v1/games/{game_id}/state", headers=auth(guest["token"]))
+        ).json()
+        cave_turn_id = guest_state["turn"]["id"]
+
+        responses = await asyncio.gather(
+            client.post(f"/api/v1/games/{game_id}/resolve", headers=auth(host["token"])),
+            client.post(
+                f"/api/v1/games/{game_id}/resolve?turn_id={cave_turn_id}",
+                headers=auth(host["token"]),
+            ),
+        )
+        for response in responses:
+            assert response.status_code == 200, response.text
+
+        async with container.database.session() as session:
+            rows = list(
+                (
+                    await session.execute(
+                        sa.select(Event.seq)
+                        .where(Event.game_id == uuid.UUID(game_id))
+                        .order_by(Event.seq)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert rows == list(range(1, len(rows) + 1)), "Der Ereigniszaehler muss lueckenlos bleiben"

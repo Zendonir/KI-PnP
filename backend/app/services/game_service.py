@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai import prompts
+from app.ai.base import LLMProvider, LLMRequest, extract_json
 from app.core.config import Settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.security import create_join_code, create_token
@@ -19,16 +23,20 @@ from app.db.models import (
     Fact,
     Game,
     GameSettings,
+    GroupProposal,
+    GroupProposalResponse,
     Knowledge,
     Location,
     Narration,
     Player,
     Quest,
     Turn,
+    TurnAck,
     WorldEntity,
 )
 from app.realtime.hub import EventHub
 from app.schemas.api import (
+    ActiveLocationTurnOut,
     AudioOut,
     DiceRollOut,
     EntityOut,
@@ -37,8 +45,10 @@ from app.schemas.api import (
     GameCreateRequest,
     GameOut,
     GameStateOut,
+    GroupProposalOut,
     LocationOut,
     NarrationOut,
+    PendingRevealOut,
     PlayerOut,
     QuestOut,
     SuggestionOut,
@@ -46,7 +56,23 @@ from app.schemas.api import (
 )
 from app.services import events as ev
 from app.services.events import EventRecorder, load_recent_events
+from app.services.turn_service import expected_player_ids
 from app.services.views import character_to_out
+
+logger = logging.getLogger(__name__)
+
+_PREMISE_SETTINGS_KEYS = (
+    "genre",
+    "world",
+    "difficulty",
+    "duration",
+    "rule_complexity",
+    "play_style",
+    "tone",
+    "campaign_type",
+)
+"""Nur die erzaehlerisch relevanten Einstellungen gehen in den Vorschau-Prompt --
+technische Felder (TTS, KI-Anbieter, ...) haben dort nichts verloren."""
 
 
 class GameService:
@@ -58,11 +84,13 @@ class GameService:
         settings: Settings,
         hub: EventHub,
         recorder: EventRecorder,
+        llm: LLMProvider,
     ) -> None:
         self._session = session
         self._settings = settings
         self._hub = hub
         self._recorder = recorder
+        self._llm = llm
 
     # -- Erstellen und Beitreten -----------------------------------------
 
@@ -79,6 +107,7 @@ class GameService:
             summary_every_n_events=self._settings.summary_every_n_events,
             **payload,
         )
+        game.premise = await self._generate_premise(payload)
         host = Player(game_id=game.id, name=request.host_name.strip(), role="host")
         self._session.add(host)
         await self._session.flush()
@@ -150,6 +179,32 @@ class GameService:
         )
         return game, player, token
 
+    async def _generate_premise(self, settings_payload: dict[str, Any]) -> str | None:
+        """Kurze Vorschau auf die kommende Welt, noch vor der eigentlichen
+        Welterschaffung (siehe TurnService.bootstrap_world). Rein
+        informativ fuer die Charaktererstellung -- ein fehlgeschlagener
+        Aufruf darf die Rundenerstellung nie blockieren, das Frontend
+        faellt dann auf einen lokal berechneten Text zurueck.
+        """
+        narrative_settings = {
+            key: settings_payload[key] for key in _PREMISE_SETTINGS_KEYS if key in settings_payload
+        }
+        try:
+            request = LLMRequest(
+                system=prompts.PREMISE_SYSTEM,
+                prompt=prompts.build_premise_prompt(narrative_settings),
+                max_tokens=400,
+                purpose="premise",
+            )
+            response = await self._llm.complete(request)
+            premise = str(extract_json(response.text).get("premise", "")).strip()
+            return premise or None
+        except Exception:  # noqa: BLE001 - Rundenerstellung darf nie blockieren
+            logger.warning(
+                "Vorschau-Generierung fehlgeschlagen, Runde startet ohne.", exc_info=True
+            )
+            return None
+
     async def _unique_code(self) -> str:
         for _ in range(20):
             code = create_join_code()
@@ -188,6 +243,28 @@ class GameService:
         )
         return (await self._session.execute(stmt)).scalars().first()
 
+    async def current_turn_for_player(self, game: Game, player: Player) -> Turn | None:
+        """Der laufende Zug am Ort des Charakters dieses Spielers.
+
+        Bleibt die Gruppe zusammen, ist das fuer alle derselbe Zug wie
+        heute. Trennt sie sich, bekommt jeder Ort seinen eigenen -- dieser
+        hier ist der, den *dieser* Spieler gerade bespielt. Zaehlt auch
+        "resolving": Phase A ist dann fertig, aber die Erzaehlung wartet
+        noch auf die Bestaetigung des Wuerfelergebnisses -- fuer Spieler und
+        Frontend ist das weiterhin der aktuelle Zug an diesem Ort.
+        """
+        character = await self.character_of(player)
+        if character is None:
+            return None
+        stmt = sa.select(Turn).where(
+            Turn.game_id == game.id,
+            Turn.status.in_(("collecting", "resolving")),
+            Turn.location_id.is_(None)
+            if character.location_id is None
+            else Turn.location_id == character.location_id,
+        )
+        return (await self._session.execute(stmt)).scalars().first()
+
     async def character_of(self, player: Player) -> Character | None:
         stmt = sa.select(Character).where(Character.player_id == player.id)
         return (await self._session.execute(stmt)).scalars().first()
@@ -221,16 +298,31 @@ class GameService:
         my_character = next(
             (item for item in characters if item.player_id == player.id), None
         )
-        turn = await self.current_turn(game)
+        turn = await self.current_turn_for_player(game, player)
+
+        # Oeffentliche Narration nur vom eigenen Ort -- sonst laese man die
+        # Erzaehlung einer unabhaengig laufenden Szene an einem anderen Ort
+        # mit. Private Hinweise (audience_player_id) bleiben davon unberuehrt.
+        # Ohne eigenen Charakter (z. B. vor dem Anlegen) gilt kein Ortsfilter.
+        if my_character is not None and my_character.location_id is not None:
+            same_location = Turn.location_id == my_character.location_id
+        elif my_character is not None:
+            same_location = Turn.location_id.is_(None)
+        else:
+            same_location = sa.true()
 
         narrations = list(
             (
                 await self._session.execute(
                     sa.select(Narration)
+                    .outerjoin(Turn, Turn.id == Narration.turn_id)
                     .where(
                         Narration.game_id == game.id,
                         sa.or_(
-                            Narration.kind == "public",
+                            sa.and_(
+                                Narration.kind == "public",
+                                sa.or_(Turn.id.is_(None), same_location),
+                            ),
                             Narration.audience_player_id == player.id,
                         ),
                     )
@@ -241,11 +333,20 @@ class GameService:
             .scalars()
             .all()
         )
+        # Derselbe Ortsfilter wie bei narrations: ohne ihn saehe man
+        # Wuerfelergebnisse einer unabhaengig laufenden Szene an einem
+        # anderen Ort mit -- und, schlimmer, ausserhalb des eigenen
+        # Wuerfel-Popups zu einem Zeitpunkt, an dem fuer die eigene Szene
+        # noch gar kein Zug abgeschlossen ist.
         rolls = list(
             (
                 await self._session.execute(
                     sa.select(DiceRoll)
-                    .where(DiceRoll.game_id == game.id)
+                    .outerjoin(Turn, Turn.id == DiceRoll.turn_id)
+                    .where(
+                        DiceRoll.game_id == game.id,
+                        sa.or_(Turn.id.is_(None), same_location),
+                    )
                     .order_by(DiceRoll.created_at.desc())
                     .limit(20)
                 )
@@ -343,14 +444,97 @@ class GameService:
                 .scalars()
                 .all()
             )
+            turn_location_name = None
+            if turn.location_id is not None:
+                turn_location = await self._session.get(Location, turn.location_id)
+                turn_location_name = turn_location.name if turn_location else None
             turn_out = TurnOut(
                 id=turn.id,
                 number=turn.number,
                 status=turn.status,
                 scene_title=turn.scene_title,
+                location_id=turn.location_id,
+                location_name=turn_location_name,
                 submitted_player_ids=submitted,
                 my_suggestions=suggestions,
             )
+
+        pending_reveal = None
+        if my_character is not None:
+            pending_location_filter = (
+                Turn.location_id.is_(None)
+                if my_character.location_id is None
+                else Turn.location_id == my_character.location_id
+            )
+            # Auch "resolving" und nicht erst "completed": die Wuerfel
+            # entstehen und committen bereits in Phase A, die Erzaehlung
+            # folgt erst nach dem KI-Aufruf mehrere Sekunden spaeter. Wuerde
+            # hier nur der abgeschlossene Zug zaehlen, waeren die Ergebnisse
+            # genau in diesem Fenster ungefiltert im Verlauf sichtbar --
+            # also vor dem Aufdeck-Fenster statt danach.
+            last_resolved = (
+                await self._session.execute(
+                    sa.select(Turn)
+                    .where(
+                        Turn.game_id == game.id,
+                        Turn.status.in_(("resolving", "completed")),
+                        pending_location_filter,
+                    )
+                    .order_by(Turn.number.desc())
+                    .limit(1)
+                )
+            ).scalars().first()
+            if last_resolved is not None:
+                acked = set(
+                    (
+                        await self._session.execute(
+                            sa.select(TurnAck.player_id).where(
+                                TurnAck.turn_id == last_resolved.id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                expected = await expected_player_ids(
+                    self._session, game, last_resolved.location_id
+                )
+                pending_reveal = PendingRevealOut(
+                    turn_id=last_resolved.id,
+                    revealed=last_resolved.revealed_at is not None,
+                    acknowledged_player_ids=sorted(acked),
+                    expected_player_ids=sorted(expected),
+                )
+
+        pending_group_proposal = None
+        if turn is not None:
+            proposal = (
+                await self._session.execute(
+                    sa.select(GroupProposal).where(GroupProposal.turn_id == turn.id)
+                )
+            ).scalars().first()
+            if proposal is not None and proposal.initiator_player_id != player.id:
+                responded_stmt = sa.select(GroupProposalResponse.id).where(
+                    GroupProposalResponse.proposal_id == proposal.id,
+                    GroupProposalResponse.player_id == player.id,
+                )
+                already_responded = (
+                    await self._session.execute(responded_stmt)
+                ).scalar_one_or_none() is not None
+                if not already_responded:
+                    initiator = await self._session.get(
+                        Character, proposal.initiator_character_id
+                    )
+                    pending_group_proposal = GroupProposalOut(
+                        id=proposal.id,
+                        initiator_name=initiator.name if initiator else "Jemand",
+                        kind=proposal.kind,
+                        text=proposal.text,
+                    )
+
+        active_location_turns = (
+            await self._active_location_turns(game) if player.role == "host" else None
+        )
 
         return GameStateOut(
             game=GameOut.model_validate(game),
@@ -363,6 +547,8 @@ class GameService:
                 await character_to_out(self._session, my_character) if my_character else None
             ),
             turn=turn_out,
+            pending_reveal=pending_reveal,
+            pending_group_proposal=pending_group_proposal,
             narrations=[
                 NarrationOut.model_validate(item) for item in reversed(narrations)
             ],
@@ -374,6 +560,10 @@ class GameService:
                     description=quest.description,
                     status=quest.current_state.status if quest.current_state else "open",
                     is_main=quest.is_main,
+                    note=quest.current_state.note if quest.current_state else "",
+                    turn_number=(
+                        quest.current_state.turn_number if quest.current_state else 0
+                    ),
                 )
                 for quest in quests
                 if not quest.current_state or quest.current_state.visibility != "secret"
@@ -393,7 +583,82 @@ class GameService:
             events=[EventOut.model_validate(item) for item in visible_events],
             audio=AudioOut.model_validate(audio) if audio else None,
             is_host=player.role == "host",
+            active_location_turns=active_location_turns,
         )
+
+    async def _active_location_turns(self, game: Game) -> list[ActiveLocationTurnOut]:
+        """Uebersicht ueber alle gleichzeitig laufenden Orte -- Spielleitung.
+
+        Zeigt Kennzahlen je Ort, keinen vollen Erzaehltext einer fremden
+        Szene (der bleibt wie bei allen anderen Spielern ortsgefiltert).
+        """
+        turns = list(
+            (
+                await self._session.execute(
+                    sa.select(Turn).where(
+                        Turn.game_id == game.id,
+                        Turn.status.in_(("collecting", "resolving")),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not turns:
+            return []
+
+        overview: list[ActiveLocationTurnOut] = []
+        for turn in turns:
+            location_filter = (
+                Character.location_id.is_(None)
+                if turn.location_id is None
+                else Character.location_id == turn.location_id
+            )
+            participants = list(
+                (
+                    await self._session.execute(
+                        sa.select(Character)
+                        .join(Player, Player.id == Character.player_id)
+                        .where(
+                            Character.game_id == game.id,
+                            Character.is_alive.is_(True),
+                            Player.is_active.is_(True),
+                            location_filter,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            submitted_count = len(
+                (
+                    await self._session.execute(
+                        sa.select(Action.player_id).where(
+                            Action.turn_id == turn.id, Action.status == "pending"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            location_name = None
+            if turn.location_id is not None:
+                location = await self._session.get(Location, turn.location_id)
+                location_name = location.name if location else None
+            overview.append(
+                ActiveLocationTurnOut(
+                    turn_id=turn.id,
+                    turn_number=turn.number,
+                    status=turn.status,
+                    location_id=turn.location_id,
+                    location_name=location_name,
+                    character_names=[item.name for item in participants],
+                    submitted_count=submitted_count,
+                    participant_count=len(participants),
+                )
+            )
+        overview.sort(key=lambda item: item.turn_number)
+        return overview
 
     async def _knowledge_for(self, game: Game, character: Character | None) -> list[str]:
         conditions = [Knowledge.subject_type == "public"]
