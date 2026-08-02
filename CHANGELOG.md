@@ -10,15 +10,16 @@ die Versionierung an [Semantic Versioning](https://semver.org/lang/de/).
 ### Hinzugefügt
 
 - Weltkarte: eine grobe, rein clientseitig aus der Spiel-ID erzeugte
-  Kuestenlinie samt Gebirge, Wald und Fluss steht von Anfang an in der
-  Lobby, noch vor Rundenstart -- ganz ohne Bildgenerierung oder
+  Kuestenlinie samt Gebirge, Huegeln, Wald, Fluss und See steht von Anfang
+  an in der Lobby, noch vor Rundenstart -- ganz ohne Bildgenerierung oder
   Server-Rundreise, dieselbe Spiel-ID ergibt immer dieselbe Karte
-  (Kompassrose und Kartenrahmen inklusive). Sobald der eigene Charakter
-  einen Standort hat, markiert eine Stecknadel (deterministisch aus dem
-  Ortsnamen) nur diesen einen, aktuellen Ort -- keine Liste aller
-  entdeckten Orte auf der Karte. Im Welt-Tab kommt bei bekanntem Standort
-  zusaetzlich eine kleinere, schlichtere Detailkarte dazu, mit eigener
-  Kuestenlinie und dem Marker in der Mitte.
+  (Kuestenschraffur, Hoehenlinien, Kompassrose, Massstabsbalken und
+  Kartenrahmen inklusive). Sobald der eigene Charakter einen Standort hat,
+  markiert eine Stecknadel (deterministisch aus dem Ortsnamen) nur diesen
+  einen, aktuellen Ort -- keine Liste aller entdeckten Orte auf der Karte.
+  Im Welt-Tab kommt bei bekanntem Standort zusaetzlich eine kleinere,
+  schlichtere Detailkarte dazu, mit eigener Kuestenlinie und dem Marker in
+  der Mitte.
 - Sichtbarer Quest-Fortschritt: der Vermerk aus dem letzten `quest.update`
   steht jetzt unter der Quest, samt Zug-Nummer. Bisher wurde er zwar
   gespeichert, aber weder angezeigt noch je wieder gelesen -- auch die KI

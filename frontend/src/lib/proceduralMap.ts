@@ -136,12 +136,47 @@ export function markerPoint(seed: string, shape: MapShape): Point {
   return pointInside(random, shape, 0.15, 0.7);
 }
 
+export interface CoastTick {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Kurze, radial nach aussen zeigende Striche entlang der Kuestenlinie --
+ * die Schraffur alter Kupferstich-Karten. Rein aus der Form abgeleitet,
+ * braucht also keinen eigenen Seed (die Form selbst ist schon deterministisch). */
+export function coastlineTicks(shape: MapShape, count = 56): CoastTick[] {
+  return Array.from({ length: count }, (_, index) => {
+    const angleFraction = index / count;
+    const angle = angleFraction * Math.PI * 2;
+    const radius = shape.radiusAt(angleFraction) * MAX_RADIUS;
+    const length = 1.5 + (index % 4) * 0.5;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return {
+      x1: CENTER + cos * radius,
+      y1: CENTER + sin * radius,
+      x2: CENTER + cos * (radius + length),
+      y2: CENTER + sin * (radius + length),
+    };
+  });
+}
+
+/** Zwei nach innen verkleinerte Kopien der Kuestenlinie, mittig gestaucht --
+ * liest sich wie Hoehenlinien einer topografischen Karte, ganz ohne eigene
+ * Berechnung: dieselbe Pfad-Zeichenkette, nur per SVG-Transform skaliert. */
+export const CONTOUR_SCALES = [0.62, 0.34] as const;
+
 export interface TerrainFeatures {
   mountains: Point[];
+  hills: Point[];
   forests: Point[];
   /** Punktfolge eines Flusslaufs von einer Quelle im Landesinneren bis zur
    * Kueste. Leer, wenn diese Karte keinen Fluss zeigt (siehe `compact`). */
   river: Point[];
+  /** Kleiner See an der Flussquelle. `null` ohne Fluss. */
+  lake: Point | null;
 }
 
 /** Wuerfelt Gelaendemerkmale innerhalb einer Kuestenlinie -- reine Zierde,
@@ -156,17 +191,22 @@ export function generateTerrainFeatures(
   const random = mulberry32(hashSeed(`${seed}:terrain`));
   const compact = options.compact ?? false;
 
-  const mountainCount = compact ? Math.floor(random() * 2) : 1 + Math.floor(random() * 3);
+  const mountainCount = compact ? Math.floor(random() * 2) : 2 + Math.floor(random() * 3);
   const mountains = Array.from({ length: mountainCount }, () =>
     pointInside(random, shape, 0.15, 0.55),
   );
 
-  const forestCount = compact ? 1 + Math.floor(random() * 2) : 2 + Math.floor(random() * 4);
-  const forests = Array.from({ length: forestCount }, () => pointInside(random, shape, 0.1, 0.8));
+  const hillCount = compact ? 1 + Math.floor(random() * 2) : 2 + Math.floor(random() * 3);
+  const hills = Array.from({ length: hillCount }, () => pointInside(random, shape, 0.1, 0.65));
+
+  const forestCount = compact ? 2 + Math.floor(random() * 2) : 4 + Math.floor(random() * 5);
+  const forests = Array.from({ length: forestCount }, () => pointInside(random, shape, 0.1, 0.85));
 
   let river: Point[] = [];
+  let lake: Point | null = null;
   if (!compact) {
     const source = pointInside(random, shape, 0.2, 0.45);
+    lake = source;
     const mouthAngleFraction = random();
     const mouthAngle = mouthAngleFraction * Math.PI * 2;
     const mouthRadius = shape.radiusAt(mouthAngleFraction) * MAX_RADIUS;
@@ -174,12 +214,12 @@ export function generateTerrainFeatures(
       x: CENTER + Math.cos(mouthAngle) * mouthRadius,
       y: CENTER + Math.sin(mouthAngle) * mouthRadius,
     };
-    const steps = 3;
+    const steps = 4;
     river = [source];
     for (let step = 1; step < steps; step += 1) {
       const t = step / steps;
-      const jitterX = (random() - 0.5) * 10;
-      const jitterY = (random() - 0.5) * 10;
+      const jitterX = (random() - 0.5) * 8;
+      const jitterY = (random() - 0.5) * 8;
       river.push({
         x: source.x + (mouth.x - source.x) * t + jitterX,
         y: source.y + (mouth.y - source.y) * t + jitterY,
@@ -188,5 +228,5 @@ export function generateTerrainFeatures(
     river.push(mouth);
   }
 
-  return { mountains, forests, river };
+  return { mountains, hills, forests, river, lake };
 }

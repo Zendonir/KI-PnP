@@ -8,6 +8,8 @@
 import { useMemo } from "react";
 
 import {
+  CONTOUR_SCALES,
+  coastlineTicks,
   generateMapShape,
   generateTerrainFeatures,
   markerPoint,
@@ -20,6 +22,17 @@ function MountainIcon({ x, y }: Point) {
     <g className="fill-ink-700/80 stroke-ink-800" strokeWidth={0.35} strokeLinejoin="round">
       <polygon points={`${x - 4},${y + 2.3} ${x - 1},${y - 3.2} ${x + 2},${y + 2.3}`} />
       <polygon points={`${x},${y + 2.3} ${x + 3},${y - 2.2} ${x + 6},${y + 2.3}`} />
+      <line x1={x - 1.6} y1={y - 1.3} x2={x - 0.7} y2={y - 2.1} className="stroke-parchment/70" strokeWidth={0.3} />
+    </g>
+  );
+}
+
+function HillIcon({ x, y }: Point) {
+  // Zwei kleine, halboffene Buckel -- deutlich flacher als ein Gebirgssymbol.
+  return (
+    <g className="fill-none stroke-ink-700/70" strokeWidth={0.5} strokeLinecap="round">
+      <path d={`M ${x - 3} ${y + 1} Q ${x - 1.5} ${y - 2} ${x} ${y + 1}`} />
+      <path d={`M ${x} ${y + 1.4} Q ${x + 1.8} ${y - 1.6} ${x + 3.6} ${y + 1.4}`} />
     </g>
   );
 }
@@ -31,6 +44,19 @@ function ForestIcon({ x, y }: Point) {
       <circle cx={x + 1.6} cy={y} r={1.3} />
       <circle cx={x} cy={y - 1.4} r={1.3} />
     </g>
+  );
+}
+
+function LakeIcon({ x, y }: Point) {
+  return (
+    <ellipse
+      cx={x}
+      cy={y}
+      rx={2.6}
+      ry={1.9}
+      className="fill-[#5b7f96]/60 stroke-[#3f5c6e]/70"
+      strokeWidth={0.4}
+    />
   );
 }
 
@@ -66,6 +92,19 @@ function CompassRose() {
   );
 }
 
+/** Kleiner, unbeschrifteter Massstabsbalken -- reine Kartenzierde, keine
+ * echte Einheit, damit nichts eine falsche Praezision vorgaukelt. */
+function ScaleBar() {
+  return (
+    <g transform="translate(10, 92)" className="opacity-60">
+      <line x1={0} y1={0} x2={14} y2={0} className="stroke-ink-800" strokeWidth={0.6} />
+      <line x1={0} y1={-1.2} x2={0} y2={1.2} className="stroke-ink-800" strokeWidth={0.6} />
+      <line x1={7} y1={-0.8} x2={7} y2={0.8} className="stroke-ink-800" strokeWidth={0.4} />
+      <line x1={14} y1={-1.2} x2={14} y2={1.2} className="stroke-ink-800" strokeWidth={0.6} />
+    </g>
+  );
+}
+
 const GRID_LINES = [20, 40, 60, 80];
 
 export function WorldMap({
@@ -86,14 +125,21 @@ export function WorldMap({
   detail?: boolean;
   size?: number;
 }) {
-  const shape = useMemo(() => {
-    const shapeSeed = detail && markerSeed ? `${seed}:detail:${markerSeed}` : seed;
-    return generateMapShape(shapeSeed, detail ? 8 : 12);
-  }, [seed, detail, markerSeed]);
+  const shapeSeed = useMemo(
+    () => (detail && markerSeed ? `${seed}:detail:${markerSeed}` : seed),
+    [seed, detail, markerSeed],
+  );
+
+  const shape = useMemo(() => generateMapShape(shapeSeed, detail ? 8 : 12), [shapeSeed, detail]);
 
   const terrain = useMemo(
-    () => generateTerrainFeatures(detail && markerSeed ? `${seed}:detail:${markerSeed}` : seed, shape, { compact: detail }),
-    [seed, detail, markerSeed, shape],
+    () => generateTerrainFeatures(shapeSeed, shape, { compact: detail }),
+    [shapeSeed, shape, detail],
+  );
+
+  const ticks = useMemo(
+    () => coastlineTicks(shape, detail ? 32 : 56),
+    [shape, detail],
   );
 
   const marker = useMemo(() => {
@@ -139,6 +185,23 @@ export function WorldMap({
           strokeWidth={detail ? 1 : 1.1}
         />
 
+        <g className="stroke-ink-800/45" strokeWidth={0.4} strokeLinecap="round">
+          {ticks.map((tick, index) => (
+            <line key={index} x1={tick.x1} y1={tick.y1} x2={tick.x2} y2={tick.y2} />
+          ))}
+        </g>
+
+        {CONTOUR_SCALES.map((scale) => (
+          <path
+            key={scale}
+            d={shape.path}
+            transform={`translate(50 50) scale(${scale}) translate(-50 -50)`}
+            className="fill-none stroke-ink-800/20"
+            strokeWidth={0.4}
+            strokeDasharray="1 1.4"
+          />
+        ))}
+
         {terrain.river.length > 1 && (
           <polyline
             points={terrain.river.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}
@@ -148,6 +211,10 @@ export function WorldMap({
             strokeLinejoin="round"
           />
         )}
+        {terrain.lake && <LakeIcon x={terrain.lake.x} y={terrain.lake.y} />}
+        {terrain.hills.map((point, index) => (
+          <HillIcon key={`h${index}`} x={point.x} y={point.y} />
+        ))}
         {terrain.mountains.map((point, index) => (
           <MountainIcon key={`m${index}`} x={point.x} y={point.y} />
         ))}
@@ -158,6 +225,7 @@ export function WorldMap({
         {marker && <LocationPin x={marker.x} y={marker.y} />}
 
         {!detail && <CompassRose />}
+        {!detail && <ScaleBar />}
         {!detail && (
           <>
             <rect
