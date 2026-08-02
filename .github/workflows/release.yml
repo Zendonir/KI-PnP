@@ -1,9 +1,17 @@
 name: Release-Images
 
 # Baut die Container-Images und veroeffentlicht sie in der GitHub Container
-# Registry (GHCR). Ausgeloest von jedem Tag "v*" oder von Hand ueber
-# "Run workflow" -- letzteres ist nuetzlich, um ohne neuen Tag ein
-# ":latest"-Image zu erzeugen.
+# Registry (GHCR). Ausgeloest von jedem Tag "v*", jedem Push auf
+# claude/ai-pen-paper-docker-wl6uzq oder von Hand ueber "Run workflow".
+#
+# Achtung: jeder dieser Laeufe markiert das Image zusaetzlich als ":latest"
+# (siehe docker-metadata-action unten) -- unabhaengig vom Branch. Ein Push
+# auf claude/ai-pen-paper-docker-wl6uzq ueberschreibt also bewusst das
+# produktiv gezogene ":latest"-Image mit dem jeweils neuesten Stand dieses
+# Entwicklungsbranches. Das ist Absicht (siehe Commit-Historie), nicht
+# versehentlich -- wer stattdessen nur bei Versions-Tags oder auf main
+# veroeffentlichen will, muss den push-Branch-Trigger unten entsprechend
+# anpassen oder entfernen.
 #
 # TrueNAS SCALE laeuft ausschliesslich auf x86-64, deshalb wird bewusst nur
 # linux/amd64 gebaut. Fuer weitere Architekturen genuegt es, "platforms" um
@@ -12,6 +20,7 @@ name: Release-Images
 on:
   push:
     tags: ["v*"]
+    branches: ["claude/ai-pen-paper-docker-wl6uzq"]
   workflow_dispatch:
 
 env:
